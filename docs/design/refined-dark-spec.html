@@ -1,0 +1,675 @@
+<meta charset="utf-8">
+<title>Geomate · Refined Dark — дизайн-направление</title>
+<style>
+  :root {
+    /* Refined surfaces — slate-blue bias picked from Geomate's own system hue (#97B2C4) */
+    --canvas:   #13171b;
+    --panel:    #1b2127;
+    --panel-2:  #222a31;
+    --raised:   #2a333b;
+    --border:   rgba(151,178,196,0.14);
+    --hairline: rgba(151,178,196,0.08);
+    --stripe:   rgba(151,178,196,0.04);
+
+    --text:   #f4f7fa;
+    --text-2: #97b2c4;
+    --text-3: #636e83;
+
+    --accent:   #10a1ff;   /* interactive / links (from typo/link) */
+    --accent-2: #00c7be;   /* geo secondary (Mint) */
+    --success:  #09b37b;
+    --warn:     #ff9f0a;
+    --danger:   #eb5757;
+
+    /* Domain palette — PRESERVED verbatim from the concept, never restyled */
+    --lith-siltstone: #3DDBD9;
+    --lith-marl:      #9EF0F0;
+    --lith-limestone: #A7F0BA;
+    --lith-argillite: #00FF98;
+    --sat-oil:        #F44336;
+    --sat-oilgas:     #FF8389;
+    --sat-gasoil:     #FFCA28;
+    --sat-gas:        #FFF69D;
+    --sat-water:      #B8E2FC;
+    --sat-product:    #BCAAA4;
+    --sat-poss:       #FFCC80;
+    --sat-noncol:     #E9EBF1;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+
+    --r-sm: 6px;
+    --r-md: 10px;
+    --r-lg: 14px;
+
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 700px at 78% -10%, rgba(16,161,255,0.06), transparent 60%),
+      var(--canvas);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 28px 120px; }
+
+  /* ---- Header ---- */
+  header.hero { padding: 84px 0 40px; border-bottom: 1px solid var(--hairline); }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+    margin: 0 0 18px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .eyebrow::before {
+    content: ""; width: 26px; height: 1px; background: var(--accent-2); opacity: 0.7;
+  }
+  h1 {
+    font-size: clamp(34px, 6vw, 56px);
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+    font-weight: 800;
+    margin: 0 0 20px;
+    text-wrap: balance;
+  }
+  h1 em { color: var(--text-3); font-style: normal; }
+  .lede { font-size: 19px; color: var(--text-2); max-width: 62ch; margin: 0 0 28px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em;
+    color: var(--text-2);
+    background: var(--panel); border: 1px solid var(--border);
+    padding: 5px 11px; border-radius: 100px;
+  }
+  .chip b { color: var(--text); font-weight: 600; }
+
+  /* ---- Section scaffolding ---- */
+  section { padding: 56px 0 8px; border-bottom: 1px solid var(--hairline); }
+  .sec-no {
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    letter-spacing: 0.12em;
+  }
+  h2 {
+    font-size: 27px; letter-spacing: -0.02em; font-weight: 700;
+    margin: 8px 0 10px; text-wrap: balance;
+  }
+  h2 + p.sec-lede { color: var(--text-2); margin: 0 0 30px; max-width: 66ch; }
+  h3 {
+    font-size: 15px; font-weight: 650; margin: 30px 0 14px;
+    letter-spacing: -0.01em;
+  }
+  p { margin: 0 0 14px; }
+  .muted { color: var(--text-2); }
+
+  /* ---- Principle cards ---- */
+  .principles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0 8px; }
+  .pc { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-md); padding: 20px; }
+  .pc .k { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-2); }
+  .pc h4 { margin: 8px 0 6px; font-size: 16px; }
+  .pc p { margin: 0; color: var(--text-2); font-size: 14.5px; }
+
+  /* ---- Swatch grids ---- */
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin: 8px 0 6px; }
+  .sw { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+  .sw .chipcolor { height: 62px; border-bottom: 1px solid var(--hairline); }
+  .sw .body { padding: 10px 12px; }
+  .sw .name { font-size: 13px; font-weight: 600; }
+  .sw .hex { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+  .sw .use { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+
+  .domaingrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px,1fr)); gap: 8px; }
+  .dchip { border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden; background: var(--panel); }
+  .dchip .c { height: 34px; }
+  .dchip .l { font-size: 11px; padding: 6px 8px; color: var(--text-2); font-family: var(--mono); }
+
+  /* ---- Type scale ---- */
+  .typerow { display: flex; align-items: baseline; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--hairline); }
+  .typerow .tag { font-family: var(--mono); font-size: 12px; color: var(--text-3); width: 130px; flex-shrink: 0; }
+  .typerow .samp { color: var(--text); }
+
+  /* ---- Spacing scale ---- */
+  .spacing { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; margin-top: 8px; }
+  .sp { text-align: center; }
+  .sp .bar { background: linear-gradient(180deg, var(--accent), var(--accent-2)); border-radius: 3px; width: 28px; margin: 0 auto 8px; opacity: 0.85; }
+  .sp .n { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+
+  /* ---- Component spec blocks ---- */
+  .spec { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; margin: 18px 0 10px; }
+  .spec .demo { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-md); padding: 18px; min-height: 120px; }
+  .spec .notes ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-2); font-size: 14.5px; }
+  .spec .notes li { margin-bottom: 7px; }
+  .ba { display: inline-flex; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; gap: 6px; margin-bottom: 10px; }
+  .ba .before { color: var(--danger); }
+  .ba .after { color: var(--success); }
+  .ba .arrow { color: var(--text-3); }
+
+  /* mini mockups */
+  .mini-canvas { background: var(--canvas); border-radius: var(--r-sm); padding: 12px; }
+
+  /* well card */
+  .wcard { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+  .wcard.active { border-color: rgba(16,161,255,0.55); box-shadow: 0 0 0 1px rgba(16,161,255,0.25), 0 8px 30px rgba(0,0,0,0.35); }
+  .wcard .hd {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; background: var(--panel-2);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .wcard .hd .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .wcard .hd .nm { font-family: var(--mono); font-weight: 600; font-size: 14px; letter-spacing: 0.02em; }
+  .wcard .hd .badge { font-family: var(--mono); font-size: 10px; color: var(--success); border: 1px solid rgba(9,179,123,0.4); background: rgba(9,179,123,0.1); padding: 2px 6px; border-radius: 100px; }
+  .wcard .hd .sp { flex: 1; }
+  .wcard .hd .ic { color: var(--text-3); font-size: 14px; }
+  .wcard .cont { height: 74px; background:
+    repeating-linear-gradient(0deg, transparent, transparent 15px, var(--hairline) 15px, var(--hairline) 16px); }
+
+  /* depth axis compare */
+  .axis { font-family: var(--mono); font-size: 11px; color: var(--text-2); }
+  .axis .tick { display: flex; align-items: center; gap: 8px; height: 26px; }
+  .axis .tick .line { flex: 1; height: 1px; background: var(--hairline); }
+  .axis.double .n2 { color: var(--danger); }
+
+  /* lithology columns */
+  .lithcompare { display: flex; gap: 20px; }
+  .lithcol { width: 54px; }
+  .lithcol .cap { font-family: var(--mono); font-size: 10px; color: var(--text-3); text-align: center; margin-top: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .boxy { display: flex; flex-direction: column; gap: 5px; }
+  .boxy > div { height: 26px; border-radius: 7px; }
+  .cont { border-radius: 3px; overflow: hidden; }
+  .cont > div { position: relative; }
+  .cont > div + div { border-top: 1px solid rgba(0,0,0,0.35); }
+  .tex-silt { background: var(--lith-siltstone); background-image: repeating-linear-gradient(45deg, rgba(0,0,0,0.18) 0 3px, transparent 3px 7px); }
+  .tex-lime { background: var(--lith-limestone); background-image: radial-gradient(rgba(0,0,0,0.22) 1px, transparent 1.4px); background-size: 8px 8px; }
+  .tex-marl { background: var(--lith-marl); background-image: repeating-linear-gradient(-45deg, rgba(0,0,0,0.16) 0 2px, transparent 2px 6px); }
+  .tex-arg  { background: var(--lith-argillite); background-image: repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0 2px, transparent 2px 6px); }
+
+  /* saturation ribbon */
+  .ribbon { display: flex; }
+  .ribbon .col { width: 46px; }
+  .ribbon .rib { width: 10px; }
+
+  /* correlation pill */
+  .corr { position: relative; height: 96px; background: var(--canvas); border-radius: var(--r-sm); overflow: hidden; }
+  .corr .pill {
+    position: absolute; left: 10px; top: 30px;
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    background: var(--raised); border: 1px solid var(--border);
+    padding: 4px 9px; border-radius: 100px; z-index: 2;
+  }
+  .corr .pill .d { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
+  .corr svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* tabs / topbar */
+  .topbar { display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 100px; padding: 5px; width: fit-content; }
+  .topbar .tab { font-size: 13px; color: var(--text-2); padding: 6px 14px; border-radius: 100px; }
+  .topbar .tab.on { color: var(--text); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--border); }
+
+  /* floating toolbar */
+  .fbar { display: inline-flex; gap: 4px; background: rgba(27,33,39,0.72); backdrop-filter: blur(14px); border: 1px solid var(--border); border-radius: 14px; padding: 7px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+  .fbar .b { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; color: var(--text-2); }
+  .fbar .b.on { background: var(--accent); color: #001322; }
+
+  /* inspector */
+  .insp { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+  .insp .hd { padding: 12px 14px; border-bottom: 1px solid var(--hairline); font-weight: 650; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .insp .row { display: flex; justify-content: space-between; padding: 9px 14px; border-bottom: 1px solid var(--hairline); font-size: 13px; }
+  .insp .row .k { color: var(--text-3); font-family: var(--mono); font-size: 12px; }
+  .insp .row .v { font-family: var(--mono); }
+
+  table.tok { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 6px; }
+  table.tok td, table.tok th { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--hairline); }
+  table.tok th { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); font-weight: 500; }
+  table.tok td.m { font-family: var(--mono); color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+  .callout { background: var(--stripe); border: 1px solid var(--border); border-left: 3px solid var(--accent-2); border-radius: var(--r-sm); padding: 14px 16px; margin: 20px 0; color: var(--text-2); font-size: 14.5px; }
+  .callout b { color: var(--text); }
+
+  .next { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; margin-top: 18px; }
+  .next .n { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px 18px; }
+  .next .n .step { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .next .n h4 { margin: 6px 0 4px; font-size: 15px; }
+  .next .n p { margin: 0; font-size: 13.5px; color: var(--text-2); }
+
+  footer { padding: 40px 0 0; color: var(--text-3); font-size: 13px; font-family: var(--mono); }
+
+  /* ---- Lucide icons ---- */
+  .lic { display: inline-flex; line-height: 0; }
+  .lic svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  .topbar .tab .lic svg { width: 15px; height: 15px; }
+  .topbar .tab { display: inline-flex; align-items: center; gap: 7px; }
+
+  .iconshow { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px,1fr)); gap: 8px; margin-top: 6px; }
+  .ic-cell { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-md); padding: 14px 10px; text-align: center; color: var(--text-2); }
+  .ic-cell .lic svg { width: 22px; height: 22px; }
+  .ic-cell .nm { font-family: var(--mono); font-size: 11px; color: var(--text-3); margin-top: 8px; }
+
+  @media (max-width: 760px) {
+    .principles, .spec, .next { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="hero">
+    <p class="eyebrow">Geomate · Correlation · Design direction</p>
+    <h1>Отшлифованный тёмный <em>—</em> направление модернизации экрана корреляции</h1>
+    <p class="lede">Не редизайн ради красоты, а наведение порядка: слои поверхностей вместо плоского чёрного, честная типографическая иерархия, сплошная литология вместо «пухлых» боксов. Доменная палитра — литология и насыщение — остаётся неприкосновенной.</p>
+    <div class="meta">
+      <span class="chip">Направление · <b>Refined dark</b></span>
+      <span class="chip">Экран · <b>Корр. схема</b></span>
+      <span class="chip">Основа · <b>токены Geomate</b></span>
+      <span class="chip">Тема · <b>dark-only (осознанно)</b></span>
+    </div>
+  </header>
+
+  <section>
+    <span class="sec-no">01</span>
+    <h2>Принципы</h2>
+    <p class="sec-lede">Четыре правила, которым подчиняется каждое решение ниже. Если элемент им не отвечает — его переделываем.</p>
+    <div class="principles">
+      <div class="pc">
+        <div class="k">Данные важнее хрома</div>
+        <h4>Интерфейс отступает</h4>
+        <p>Кривые, литология и маркеры — единственные яркие пятна. Хром (панели, рамки, иконки) живёт в узком диапазоне серо-синих и никогда не спорит с данными.</p>
+      </div>
+      <div class="pc">
+        <div class="k">Слои, не плоскость</div>
+        <h4>Глубина через поверхности</h4>
+        <p>Три уровня: холст → панель → приподнятый элемент. Разделяем тонкими hairline-границами на низкой прозрачности, а не жирными рамками.</p>
+      </div>
+      <div class="pc">
+        <div class="k">Домен свят</div>
+        <h4>Палитру геолога не трогаем</h4>
+        <p>Литология и насыщение — это язык, а не декор. Мы меняем оправу, но цвета и паттерны пластов остаются 1:1.</p>
+      </div>
+      <div class="pc">
+        <div class="k">Инструмент, не документ</div>
+        <h4>Моноширинный для чисел</h4>
+        <p>Глубины, диапазоны, координаты — моноширинным шрифтом с табличными цифрами. Это про приборы и замеры, а не про статью.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="sec-no">02</span>
+    <h2>Токены: поверхности и хром</h2>
+    <p class="sec-lede">Нейтрали со сдвигом в сине-стальной — взял из вашего же системного оттенка <code>#97B2C4</code>, чтобы серый читался как выбранный, а не дефолтный.</p>
+    <div class="swatches">
+      <div class="sw"><div class="chipcolor" style="background:#13171b"></div><div class="body"><div class="name">canvas</div><div class="hex">#13171B</div><div class="use">фон холста корреляции</div></div></div>
+      <div class="sw"><div class="chipcolor" style="background:#1b2127"></div><div class="body"><div class="name">panel</div><div class="hex">#1B2127</div><div class="use">карточки скважин</div></div></div>
+      <div class="sw"><div class="chipcolor" style="background:#222a31"></div><div class="body"><div class="name">panel-2</div><div class="hex">#222A31</div><div class="use">хедеры, тулбары</div></div></div>
+      <div class="sw"><div class="chipcolor" style="background:#2a333b"></div><div class="body"><div class="name">raised</div><div class="hex">#2A333B</div><div class="use">пилюли, hover</div></div></div>
+      <div class="sw"><div class="chipcolor" style="background:rgba(151,178,196,0.14)"></div><div class="body"><div class="name">border</div><div class="hex">rgba(151,178,196,.14)</div><div class="use">границы панелей</div></div></div>
+      <div class="sw"><div class="chipcolor" style="background:rgba(151,178,196,0.08)"></div><div class="body"><div class="name">hairline</div><div class="hex">rgba(151,178,196,.08)</div><div class="use">разделители, сетка</div></div></div>
+    </div>
+
+    <h3>Текст и акценты</h3>
+    <div class="swatches">
+      <div class="sw"><div class="chipcolor" style="background:#f4f7fa"></div><div class="body"><div class="name">text</div><div class="hex">#F4F7FA</div><div class="use">заголовки, значения</div></div></div>
+      <div class="sw"><div class="chipcolor" style="background:#97b2c4"></div><div class="body"><div class="name">text-2</div><div class="hex">#97B2C4</div><div class="use">подписи, вторичное</div></div></div>
+      <div class="sw"><div class="chipcolor" style="background:#636e83"></div><div class="body"><div class="name">text-3</div><div class="hex">#636E83</div><div class="use">только крупный/декор</div></div></div>
+      <div class="sw"><div class="chipcolor" style="background:#10a1ff"></div><div class="body"><div class="name">accent</div><div class="hex">#10A1FF</div><div class="use">интерактив, активное</div></div></div>
+      <div class="sw"><div class="chipcolor" style="background:#00c7be"></div><div class="body"><div class="name">accent-2</div><div class="hex">#00C7BE</div><div class="use">гео-акцент, эйбрау</div></div></div>
+      <div class="sw"><div class="chipcolor" style="background:#09b37b"></div><div class="body"><div class="name">success</div><div class="hex">#09B37B</div><div class="use">статус, готово</div></div></div>
+    </div>
+    <div class="callout"><b>Один акцент, а не радуга хрома.</b> <code>#10A1FF</code> — единственный интерактивный цвет (активная вкладка, выбранная скважина, ссылки). <code>#00C7BE</code> — редкий гео-акцент для эйбрау и служебных штрихов. Всё остальное свечение отдаём данным.</div>
+    <div class="callout" style="border-left-color:var(--warn)"><b>Контраст:</b> <code>text-3 (#636E83)</code> на <code>canvas</code> даёт ~3:1 — годится только для крупного текста и декоративных подписей осей, но не для рабочих значений. Рабочие подписи — минимум <code>text-2</code>.</div>
+  </section>
+
+  <section>
+    <span class="sec-no">03</span>
+    <h2>Доменная палитра — сохраняем 1:1</h2>
+    <p class="sec-lede">Это не предмет редизайна. Показано здесь, чтобы зафиксировать: значения из <code>correlation/*</code> переносятся без изменений — меняется только как мы их подаём (сплошная колонка, тонкая лента).</p>
+    <h3>Литология (текстуры)</h3>
+    <div class="domaingrid">
+      <div class="dchip"><div class="c tex-silt"></div><div class="l">siltstone</div></div>
+      <div class="dchip"><div class="c tex-marl"></div><div class="l">marl</div></div>
+      <div class="dchip"><div class="c tex-lime"></div><div class="l">limestone</div></div>
+      <div class="dchip"><div class="c tex-arg"></div><div class="l">argillite</div></div>
+    </div>
+    <h3>Насыщение</h3>
+    <div class="domaingrid">
+      <div class="dchip"><div class="c" style="background:#F44336"></div><div class="l">oil</div></div>
+      <div class="dchip"><div class="c" style="background:#FF8389"></div><div class="l">oil+gas</div></div>
+      <div class="dchip"><div class="c" style="background:#FFCA28"></div><div class="l">gas+oil</div></div>
+      <div class="dchip"><div class="c" style="background:#FFF69D"></div><div class="l">gas</div></div>
+      <div class="dchip"><div class="c" style="background:#FCFF61"></div><div class="l">gas+water</div></div>
+      <div class="dchip"><div class="c" style="background:#B8E2FC"></div><div class="l">water</div></div>
+      <div class="dchip"><div class="c" style="background:#BCAAA4"></div><div class="l">product</div></div>
+      <div class="dchip"><div class="c" style="background:#FFCC80"></div><div class="l">poss. prod.</div></div>
+      <div class="dchip"><div class="c" style="background:#E9EBF1"></div><div class="l">non-collector</div></div>
+      <div class="dchip"><div class="c" style="background:#CCFF90"></div><div class="l">non-defined</div></div>
+    </div>
+    <div class="callout"><b>Паттерны как второй канал.</b> Литология различается не только цветом, но и текстурой — это удерживаем: работает при цветовой слепоте и при ч/б печати планшета.</div>
+  </section>
+
+  <section>
+    <span class="sec-no">04</span>
+    <h2>Типографика</h2>
+    <p class="sec-lede">Две роли. Системный sans для интерфейса и текста; моноширинный — для всего, что является замером: глубины, диапазоны, имена скважин, координаты.</p>
+    <div>
+      <div class="typerow"><span class="tag">display / 27px 700</span><span class="samp" style="font-size:27px;letter-spacing:-0.02em;font-weight:700">Корреляционная схема</span></div>
+      <div class="typerow"><span class="tag">title / 16px 650</span><span class="samp" style="font-size:16px;font-weight:650">Заголовок панели</span></div>
+      <div class="typerow"><span class="tag">body / 15px 400</span><span class="samp" style="font-size:15px">Основной текст и подписи интерфейса</span></div>
+      <div class="typerow"><span class="tag">label / mono 12px</span><span class="samp" style="font-family:var(--mono);font-size:12px;letter-spacing:0.02em;color:var(--text-2)">GR · GAPI · [25.8–101.4]</span></div>
+      <div class="typerow"><span class="tag">data / mono 14px</span><span class="samp" style="font-family:var(--mono);font-size:14px;font-variant-numeric:tabular-nums">1607.60 м · UT-1058</span></div>
+      <div class="typerow" style="border:0"><span class="tag">eyebrow / mono 12px</span><span class="samp" style="font-family:var(--mono);font-size:12px;letter-spacing:0.16em;text-transform:uppercase;color:var(--accent-2)">Well correlation</span></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="sec-no">05</span>
+    <h2>Спейсинг и радиусы</h2>
+    <p class="sec-lede">Один шаг — 4px. Всё кратно. Радиусы — три ступени: чипы/сетка (6), панели (10), плавающие элементы (14).</p>
+    <div class="spacing">
+      <div class="sp"><div class="bar" style="height:4px"></div><div class="n">4</div></div>
+      <div class="sp"><div class="bar" style="height:8px"></div><div class="n">8</div></div>
+      <div class="sp"><div class="bar" style="height:12px"></div><div class="n">12</div></div>
+      <div class="sp"><div class="bar" style="height:16px"></div><div class="n">16</div></div>
+      <div class="sp"><div class="bar" style="height:24px"></div><div class="n">24</div></div>
+      <div class="sp"><div class="bar" style="height:32px"></div><div class="n">32</div></div>
+      <div class="sp"><div class="bar" style="height:48px"></div><div class="n">48</div></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="sec-no">06</span>
+    <h2>Иконография — Lucide</h2>
+    <p class="sec-lede">Единый набор — <b>Lucide</b> (в приложении <code>lucide-react</code>). Тонкая обводка и округлые концы перекликаются с радиусами интерфейса и не спорят с плотностью данных.</p>
+    <table class="tok">
+      <tr><th>Параметр</th><th>Значение</th></tr>
+      <tr><td>Обводка</td><td class="m">stroke 1.75px · round cap/join · fill none</td></tr>
+      <tr><td>Размер</td><td class="m">20–22px тулбар · 18px хедеры · 16px inline</td></tr>
+      <tr><td>Цвет</td><td class="m">currentColor → text-2 покой · accent активное · danger опасное</td></tr>
+      <tr><td>Выравнивание</td><td class="m">optical center, hit-area ≥ 34px</td></tr>
+    </table>
+    <h3>Маппинг разделов и инструментов</h3>
+    <div class="iconshow">
+      <div class="ic-cell"><span class="lic"><svg viewBox="0 0 24 24"><path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/></svg></span><div class="nm">Map · Карта</div></div>
+      <div class="ic-cell"><span class="lic"><svg viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg></span><div class="nm">Layers · Корр.</div></div>
+      <div class="ic-cell"><span class="lic"><svg viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/></svg></span><div class="nm">Link2 · Привязка</div></div>
+      <div class="ic-cell"><span class="lic"><svg viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg></span><div class="nm">Dashboard</div></div>
+      <div class="ic-cell"><span class="lic"><svg viewBox="0 0 24 24"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M4 6a2 2 0 0 1 2-2h11.62a1 1 0 0 1 .78.375l2.6 3.25a1 1 0 0 1 0 1.25l-2.6 3.25a1 1 0 0 1-.78.375H6a2 2 0 0 1-2-2z"/></svg></span><div class="nm">Milestone · маркер</div></div>
+      <div class="ic-cell"><span class="lic"><svg viewBox="0 0 24 24"><path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/></svg></span><div class="nm">Waves · кривая</div></div>
+      <div class="ic-cell"><span class="lic"><svg viewBox="0 0 24 24"><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></svg></span><div class="nm">Ruler · глубина</div></div>
+      <div class="ic-cell"><span class="lic"><svg viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span><div class="nm">Settings</div></div>
+    </div>
+    <div class="callout"><b>Одна библиотека — один язык.</b> Никаких смешанных наборов и эмодзи в интерфейсе. Всё, что не покрыто Lucide (спец-символы литологии), рисуем как SVG в той же обводке 1.75px.</div>
+  </section>
+
+  <section>
+    <span class="sec-no">07</span>
+    <h2>Компоненты: до → после</h2>
+    <p class="sec-lede">Главная работа направления. Каждый блок — конкретное изменение с мини-демо в целевой стилистике.</p>
+
+    <h3>Карточка скважины</h3>
+    <div class="spec">
+      <div class="demo">
+        <div class="mini-canvas">
+          <div class="wcard active" style="margin-bottom:12px">
+            <div class="hd"><span class="dot"></span><span class="nm">UT-1058</span><span class="badge">active</span><span class="sp"></span><span class="ic lic"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></span><span class="ic lic"><svg viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span></div>
+            <div class="cont"></div>
+          </div>
+          <div class="wcard">
+            <div class="hd" style="background:transparent"><span class="nm" style="color:var(--text-2)">UT-1059</span><span class="sp"></span><span class="ic lic"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></span></div>
+            <div class="cont" style="opacity:.5"></div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <span class="ba"><span class="before">было</span><span class="arrow">→</span><span class="after">стало</span></span>
+        <ul>
+          <li>Хедер на приподнятой поверхности <code>panel-2</code>, имя скважины — моноширинным.</li>
+          <li>Активная скважина: акцентная рамка + мягкое свечение <code>#10A1FF</code>. Раньше состояния выбора не было видно.</li>
+          <li>Чип-статус (<code>active</code>) вместо безликого хедера; иконки крупнее и с внятным hit-area 34px.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Ось глубины</h3>
+    <div class="spec">
+      <div class="demo">
+        <div style="display:flex;gap:26px">
+          <div>
+            <div class="axis double">
+              <div class="tick"><span>1587.6</span><span class="n2">1540</span></div>
+              <div class="tick"><span>1597.6</span><span class="n2">1550</span></div>
+              <div class="tick"><span>1607.6</span><span class="n2">1560</span></div>
+            </div>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--danger);margin-top:6px">две шкалы</div>
+          </div>
+          <div style="flex:1">
+            <div class="axis">
+              <div class="tick"><span>1587.6</span><span class="line"></span></div>
+              <div class="tick"><span>1597.6</span><span class="line"></span></div>
+              <div class="tick"><span>1607.6</span><span class="line"></span></div>
+            </div>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--success);margin-top:6px">одна шкала + линии сетки</div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <span class="ba"><span class="before">было</span><span class="arrow">→</span><span class="after">стало</span></span>
+        <ul>
+          <li>Убираем вторую колонку чисел — она путает. Одна ось MD на скважину.</li>
+          <li>Тики продолжаются тонкой hairline-линией через трек — глаз ведёт по глубине.</li>
+          <li>Общая рейка глубины слева остаётся как «глобальный» референс.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Литологическая колонка</h3>
+    <div class="spec">
+      <div class="demo">
+        <div class="mini-canvas">
+          <div class="lithcompare">
+            <div>
+              <div class="lithcol boxy">
+                <div class="tex-silt"></div><div class="tex-lime"></div><div class="tex-marl"></div><div class="tex-arg"></div>
+              </div>
+              <div class="cap" style="color:var(--danger)">boxy</div>
+            </div>
+            <div>
+              <div class="lithcol cont">
+                <div class="tex-silt" style="height:34px"></div>
+                <div class="tex-lime" style="height:22px"></div>
+                <div class="tex-marl" style="height:30px"></div>
+                <div class="tex-arg" style="height:18px"></div>
+              </div>
+              <div class="cap" style="color:var(--success)">continuous</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <span class="ba"><span class="before">было</span><span class="arrow">→</span><span class="after">стало</span></span>
+        <ul>
+          <li>Сплошная колонка вместо стопки скруглённых боксов с зазорами — пласты читаются как непрерывный разрез.</li>
+          <li>Текстура на низкой прозрачности, разделители — тонкая тёмная линия 1px, а не воздух.</li>
+          <li>Высота сегмента = реальная мощность пласта, а не фиксированный бокс.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Лента насыщения + заголовок трека</h3>
+    <div class="spec">
+      <div class="demo">
+        <div class="mini-canvas" style="display:flex;gap:16px;align-items:flex-start">
+          <div class="ribbon">
+            <div class="col lithcol cont">
+              <div class="tex-silt" style="height:32px"></div>
+              <div class="tex-lime" style="height:28px"></div>
+              <div class="tex-marl" style="height:24px"></div>
+            </div>
+            <div class="rib" style="display:flex;flex-direction:column">
+              <div style="height:32px;background:#F44336"></div>
+              <div style="height:28px;background:#B8E2FC"></div>
+              <div style="height:24px;background:#FFF69D"></div>
+            </div>
+          </div>
+          <div style="flex:1">
+            <div style="border:1px solid var(--border);border-radius:6px;overflow:hidden">
+              <div style="padding:6px 8px;background:var(--panel-2);border-bottom:1px solid var(--hairline)">
+                <div style="font-family:var(--mono);font-size:11px;color:#10a1ff">GR · GAPI</div>
+                <div style="font-family:var(--mono);font-size:10px;color:var(--text-3)">25.8 — 101.4</div>
+              </div>
+              <div style="height:56px;background:repeating-linear-gradient(90deg,transparent,transparent 11px,var(--hairline) 11px,var(--hairline) 12px)"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <span class="ba"><span class="before">было</span><span class="arrow">→</span><span class="after">стало</span></span>
+        <ul>
+          <li>Насыщение — тонкая лента вплотную к литологии, а не отдельная стопка боксов.</li>
+          <li>У каждого трека кривой — компактный заголовок: мнемоника в цвет кривой + единицы + диапазон.</li>
+          <li>Лёгкая вертикальная сетка внутри трека для чтения значений.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Маркер и линия корреляции</h3>
+    <div class="spec">
+      <div class="demo">
+        <div class="corr">
+          <svg viewBox="0 0 300 96" preserveAspectRatio="none">
+            <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#FF9F0A" stop-opacity="0.9"/>
+              <stop offset="1" stop-color="#FF9F0A" stop-opacity="0.35"/>
+            </linearGradient></defs>
+            <path d="M0,44 C90,44 120,58 300,58" fill="none" stroke="url(#g)" stroke-width="2"/>
+          </svg>
+          <span class="pill"><span class="d"></span>KP S8 · 1607.6</span>
+        </div>
+      </div>
+      <div class="notes">
+        <span class="ba"><span class="before">было</span><span class="arrow">→</span><span class="after">стало</span></span>
+        <ul>
+          <li>Плавный безье с градиентом по длине вместо жёсткой ломаной — читается как геологический маркер, а не как график.</li>
+          <li>Пилюля маркера: цветная точка + имя + глубина моноширинным; снап к пласту при перетаскивании.</li>
+          <li>Наведение подсвечивает маркер во всех скважинах сразу.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Верхняя панель и вкладки</h3>
+    <div class="spec">
+      <div class="demo">
+        <div class="mini-canvas" style="display:flex;justify-content:center">
+          <div class="topbar">
+            <span class="tab"><span class="lic"><svg viewBox="0 0 24 24"><path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/></svg></span>Карта</span>
+            <span class="tab on"><span class="lic"><svg viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg></span>Корр. схема</span>
+            <span class="tab"><span class="lic"><svg viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/></svg></span>Привязка</span>
+            <span class="tab"><span class="lic"><svg viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg></span>Дашборд</span>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <span class="ba"><span class="before">было</span><span class="arrow">→</span><span class="after">стало</span></span>
+        <ul>
+          <li>Сегмент-контрол в пилюле: активная вкладка на приподнятой поверхности, а не просто другой цвет текста.</li>
+          <li>Имя документа («Корреляция Draft») слева получает иконку статуса сохранения.</li>
+          <li>Единый радиус 100px для всех пилюль в шапке.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Плавающий тулбар</h3>
+    <div class="spec">
+      <div class="demo">
+        <div class="mini-canvas" style="display:flex;justify-content:center">
+          <div class="fbar">
+            <div class="b on lic"><svg viewBox="0 0 24 24"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg></div>
+            <div class="b lic"><svg viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/></svg></div>
+            <div class="b lic"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"/></svg></div>
+            <div class="b lic"><svg viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .962 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.962 0z"/></svg></div>
+            <div class="b lic"><svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg></div>
+            <div class="b lic"><svg viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/></svg></div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <span class="ba"><span class="before">было</span><span class="arrow">→</span><span class="after">стало</span></span>
+        <ul>
+          <li>Полупрозрачный фон с blur — тулбар «плывёт» над холстом, но не перекрывает данные.</li>
+          <li>Активный инструмент залит акцентом; остальные — спокойный <code>text-2</code>.</li>
+          <li>Hit-area 34px, радиус 9px, единый ритм 4px между кнопками.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Инспектор (новое)</h3>
+    <div class="spec">
+      <div class="demo">
+        <div class="mini-canvas">
+          <div class="insp">
+            <div class="hd"><span class="d" style="width:9px;height:9px;border-radius:50%;background:var(--warn);display:inline-block"></span> Маркер KP S8</div>
+            <div class="row"><span class="k">well</span><span class="v">UT-1058</span></div>
+            <div class="row"><span class="k">depth MD</span><span class="v">1607.60</span></div>
+            <div class="row"><span class="k">Δ к UT-1059</span><span class="v" style="color:var(--success)">+3.20</span></div>
+            <div class="row" style="border:0"><span class="k">surface</span><span class="v">Top S8</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <span class="ba"><span class="before">нет</span><span class="arrow">→</span><span class="after">добавляем</span></span>
+        <ul>
+          <li>Правая панель-инспектор для выбранного маркера/интервала: глубины, невязки между скважинами, привязка к поверхности.</li>
+          <li>Всё числовое — моноширинным, дельты подсвечены семантическим цветом.</li>
+          <li>Появляется по выбору, уезжает при клике на холст — не крадёт место постоянно.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="sec-no">08</span>
+    <h2>Взаимодействие и движение</h2>
+    <p class="sec-lede">Движение — только функциональное. Никаких декоративных анимаций: они как раз добавляют ощущение «сгенерировано».</p>
+    <table class="tok">
+      <tr><th>Действие</th><th>Поведение</th><th>Тайминг</th></tr>
+      <tr><td>Зум по глубине</td><td class="m">колесо, точка под курсором — якорь</td><td class="m">ease-out 120ms</td></tr>
+      <tr><td>Панорама</td><td class="m">перетаскивание холста, курсор grabbing</td><td class="m">1:1, без инерции</td></tr>
+      <tr><td>Перетаскивание маркера</td><td class="m">снап к ближайшему пласту/тику</td><td class="m">120ms snap</td></tr>
+      <tr><td>Наведение на маркер</td><td class="m">подсветка во всех скважинах + readout</td><td class="m">80ms</td></tr>
+      <tr><td>Открытие инспектора</td><td class="m">слайд справа 280px</td><td class="m">ease-out 180ms</td></tr>
+      <tr><td>Кроссхэйр глубины</td><td class="m">горизонталь через все скважины + значение</td><td class="m">мгновенно</td></tr>
+    </table>
+    <div class="callout"><code>prefers-reduced-motion</code> — отключаем слайды и снап-анимации, оставляем мгновенные переходы состояний.</div>
+  </section>
+
+  <section>
+    <span class="sec-no">09</span>
+    <h2>Доступность и печать</h2>
+    <p class="sec-lede">Геолог печатает планшет и работает часами. Дизайн обязан это выдерживать.</p>
+    <ul class="muted" style="font-size:15px;line-height:1.9">
+      <li><b style="color:var(--text)">Двойное кодирование:</b> литология различается цветом <i>и</i> текстурой; насыщение — цветом <i>и</i> позицией ленты. Работает при ЦС и в ч/б.</li>
+      <li><b style="color:var(--text)">Контраст:</b> рабочие подписи ≥ <code>text-2</code> (≈4.5:1). <code>text-3</code> — только крупный/декоративный текст.</li>
+      <li><b style="color:var(--text)">Фокус:</b> видимая focus-обводка акцентом на всех интерактивных элементах (клавиатурная навигация по скважинам и маркерам).</li>
+      <li><b style="color:var(--text)">Будущая светлая/печатная тема:</b> токены <code>Light/*</code> в системе уже есть — на них построим печатный планшет (белый фон, те же доменные цвета). Это отдельный трек, не сейчас.</li>
+    </ul>
+  </section>
+
+  <section style="border:0">
+    <span class="sec-no">10</span>
+    <h2>Следующие шаги</h2>
+    <div class="next">
+      <div class="n"><div class="step">01</div><h4>Зафиксировать токены</h4><p>Перенести refined-палитру в файл темы GeoViewer (CSS-переменные) — общий источник для кода и Figma.</p></div>
+      <div class="n"><div class="step">02</div><h4>Собрать 3 ключевых компонента</h4><p>Карточка скважины, сплошная литология, заголовок трека — на реальных данных в приложении.</p></div>
+      <div class="n"><div class="step">03</div><h4>Маркеры и корреляция</h4><p>Пилюли, безье-линии, снап, кроссхэйр глубины — это и есть roadmap-пункт «tops + корреляция».</p></div>
+      <div class="n"><div class="step">04</div><h4>Инспектор и невязки</h4><p>Правая панель с дельтами между скважинами — превращает вьюер в рабочий инструмент.</p></div>
+    </div>
+  </section>
+
+  <footer>Geomate · refined dark · спецификация направления · доменная палитра сохранена 1:1</footer>
+</div>
