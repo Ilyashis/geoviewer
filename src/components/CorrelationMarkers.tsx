@@ -133,11 +133,14 @@ export function CorrelationMarkers({
 
       {markers.map((m) => {
         const selected = m.id === selectedMarkerId;
-        const firstDepth = m.depths[p0.wellId] ?? bottom;
-        const railY = yOf(p0, firstDepth);
+        // Only wells that actually have this surface picked; skip the rest.
+        const defined = geom.plates.filter((p) => Number.isFinite(m.depths[p.wellId]));
+        if (defined.length === 0) return null;
+        const refWell = defined[0].wellId;
+        const railY = yOf(defined[0], m.depths[refWell]);
         let d = `M ${RAIL_W - 14} ${railY}`;
-        geom.plates.forEach((p) => {
-          const y = yOf(p, m.depths[p.wellId] ?? bottom);
+        defined.forEach((p) => {
+          const y = yOf(p, m.depths[p.wellId]);
           d += ` L ${p.x0} ${y} L ${p.x1} ${y}`;
         });
         return (
@@ -147,8 +150,8 @@ export function CorrelationMarkers({
             <path className="line" d={d} fill="none" stroke={m.color} strokeWidth={selected ? 3 : 2} strokeLinejoin="round" opacity={selected ? 1 : 0.9} />
 
             {/* per-well drag handles (large transparent hit area + visible dot) */}
-            {geom.plates.map((p) => {
-              const y = yOf(p, m.depths[p.wellId] ?? bottom);
+            {defined.map((p) => {
+              const y = yOf(p, m.depths[p.wellId]);
               if (!inView(y)) return null;
               return (
                 <g key={p.wellId}>
@@ -164,7 +167,7 @@ export function CorrelationMarkers({
             {inView(railY) && (
               <>
                 <circle className="handle" cx={RAIL_W - 14} cy={railY} r={12} fill="transparent"
-                  onMouseDown={(e) => startDrag(e, m.id, p0.wellId)} />
+                  onMouseDown={(e) => startDrag(e, m.id, refWell)} />
                 <circle cx={RAIL_W - 14} cy={railY} r={selected ? 6 : 5}
                   fill={m.color} stroke="var(--panel)" strokeWidth={1.5} pointerEvents="none" />
                 <g transform={`translate(8, ${railY + 10})`} className="hit" onMouseDown={() => onSelect(m.id)}>

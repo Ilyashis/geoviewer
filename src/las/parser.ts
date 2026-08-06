@@ -165,10 +165,24 @@ export function parseLasToWell(text: string, fileName = 'well.las'): Well {
     parsed.well['WELL']?.value?.trim() ||
     fileName.replace(/\.las$/i, '');
 
+  // Surface coordinates from common ~Well mnemonics (X/Y or lon/lat fallback).
+  const pickCoord = (re: RegExp): number | undefined => {
+    for (const [k, item] of Object.entries(parsed.well)) {
+      if (!re.test(k)) continue;
+      const n = Number(item.value);
+      if (Number.isFinite(n)) return n;
+    }
+    return undefined;
+  };
+  const x = pickCoord(/^(x|xcoord|xwell|surfx|east|easting|x_utm|xutm|lon|long|slon)$/i);
+  const y = pickCoord(/^(y|ycoord|ywell|surfy|north|northing|y_utm|yutm|lat|slat)$/i);
+
   return {
     id: `well-${uid()}`,
     name,
     uwi: parsed.well['UWI']?.value || parsed.well['API']?.value || undefined,
+    x,
+    y,
     depth,
     depthUnit: depthInfo.unit || 'M',
     curves,

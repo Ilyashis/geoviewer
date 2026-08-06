@@ -10,6 +10,9 @@ import { MarkerInspector } from './components/MarkerInspector';
 import { ImportModal } from './components/ImportModal';
 import { ExportMenu } from './components/ExportMenu';
 import { ProjectMenu } from './components/ProjectMenu';
+import { Dashboard } from './components/Dashboard';
+import { WellMap } from './components/WellMap';
+import { WellTie } from './components/WellTie';
 import {
   bootstrap, persist, createProject, renameProject, switchProject, deleteProject,
 } from './persistence';
@@ -45,6 +48,7 @@ export default function App() {
   const setActiveWell = useStore((s) => s.setActiveWell);
   const addMarkerAtDepth = useStore((s) => s.addMarkerAtDepth);
   const updateMarkerDepth = useStore((s) => s.updateMarkerDepth);
+  const removeMarkerDepth = useStore((s) => s.removeMarkerDepth);
   const renameMarker = useStore((s) => s.renameMarker);
   const removeMarker = useStore((s) => s.removeMarker);
   const selectMarker = useStore((s) => s.selectMarker);
@@ -55,6 +59,8 @@ export default function App() {
   const projects = useStore((s) => s.projects);
   const setProjects = useStore((s) => s.setProjects);
   const setCurrentProject = useStore((s) => s.setCurrentProject);
+  const hiddenTracks = useStore((s) => s.hiddenTracks);
+  const toggleTrack = useStore((s) => s.toggleTrack);
   const selectedMarker = markers.find((m) => m.id === selectedMarkerId) ?? null;
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -65,7 +71,6 @@ export default function App() {
   const [cursorDepth, setCursorDepth] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [focusedWellId, setFocusedWellId] = useState<string | null>(null);
-  const [hiddenTracks, setHiddenTracks] = useState<Record<string, string[]>>({});
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -97,15 +102,15 @@ export default function App() {
       // Track data-slice identity so unrelated state changes (selection, project
       // list) don't trigger a save — and the initial hydration above never does.
       const g = useStore.getState();
-      let last = { wells: g.wells, markers: g.markers, activeWellId: g.activeWellId };
+      let last = { wells: g.wells, markers: g.markers, activeWellId: g.activeWellId, hiddenTracks: g.hiddenTracks };
       unsub = useStore.subscribe((s) => {
-        if (s.wells === last.wells && s.markers === last.markers && s.activeWellId === last.activeWellId) return;
-        last = { wells: s.wells, markers: s.markers, activeWellId: s.activeWellId };
+        if (s.wells === last.wells && s.markers === last.markers && s.activeWellId === last.activeWellId && s.hiddenTracks === last.hiddenTracks) return;
+        last = { wells: s.wells, markers: s.markers, activeWellId: s.activeWellId, hiddenTracks: s.hiddenTracks };
         clearTimeout(timer);
         timer = setTimeout(() => {
           const st = useStore.getState();
           if (!st.projectId) return;
-          persist(st.projectId, st.projectName, { wells: st.wells, markers: st.markers, activeWellId: st.activeWellId })
+          persist(st.projectId, st.projectName, { wells: st.wells, markers: st.markers, activeWellId: st.activeWellId, hiddenTracks: st.hiddenTracks })
             .then((list) => { setProjects(list); setSavedAt(Date.now()); })
             .catch(() => {});
         }, 500);
@@ -170,13 +175,6 @@ export default function App() {
     replaceProject(b.data);
     setDepthWindow(null);
   };
-
-  const toggleTrack = (wellId: string, key: string) =>
-    setHiddenTracks((prev) => {
-      const cur = prev[wellId] ?? [];
-      const next = cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key];
-      return { ...prev, [wellId]: next };
-    });
 
   const effectiveWindow = useMemo<[number, number]>(() => depthWindow ?? [0, 100], [depthWindow]);
   const showCorrelation = tab === 'correlation' && wells.length > 0;
@@ -244,8 +242,20 @@ export default function App() {
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files) addLasFiles(e.dataTransfer.files); }}
       >
-        {tab !== 'correlation' ? (
-          <TabPlaceholder tab={tab} />
+        {tab === 'dashboard' ? (
+          <Dashboard projectName={projectName} wells={wells} markers={markers} />
+        ) : tab === 'map' ? (
+          <WellMap wells={wells} activeWellId={activeWellId} onActivate={setActiveWell} />
+        ) : tab === 'tie' ? (
+          <WellTie
+            wells={wells}
+            markers={markers}
+            updateMarkerDepth={updateMarkerDepth}
+            removeMarkerDepth={removeMarkerDepth}
+            renameMarker={renameMarker}
+            removeMarker={removeMarker}
+            addMarkerAtDepth={addMarkerAtDepth}
+          />
         ) : wells.length === 0 ? (
           <div className="empty">
             <div className="empty-card">
@@ -339,21 +349,3 @@ export default function App() {
   );
 }
 
-function TabPlaceholder({ tab }: { tab: TabKey }) {
-  const meta: Record<Exclude<TabKey, 'correlation'>, { title: string; desc: string }> = {
-    map: { title: 'Карта', desc: 'Схема расположения скважин и профилей корреляции.' },
-    tie: { title: 'Привязка', desc: 'Увязка каротажа со стратиграфией и поверхностями.' },
-    dashboard: { title: 'Дашборд', desc: 'Сводка по проекту, кривым и невязкам.' },
-  };
-  const m = meta[tab as Exclude<TabKey, 'correlation'>];
-  if (!m) return null;
-  return (
-    <div className="placeholder">
-      <div className="pc">
-        <h3>{m.title}</h3>
-        <p>{m.desc}</p>
-        <div className="soon">скоро</div>
-      </div>
-    </div>
-  );
-}

@@ -20,11 +20,11 @@ interface PlateGeom {
  * single PNG. Re-measures the DOM so the export matches the current depth
  * window and marker picks; renders at 2× for crisp output.
  */
-export function exportCorrelationPng(
+export function exportCorrelationCanvas(
   bodyEl: HTMLElement,
   markers: Marker[],
   depthWindow: [number, number],
-): string | null {
+): HTMLCanvasElement | null {
   const corr = bodyEl.querySelector<HTMLElement>('.correlation');
   if (!corr) return null;
   const corrRect = corr.getBoundingClientRect();
@@ -150,7 +150,27 @@ export function exportCorrelationPng(
   }
 
   void hairline;
-  return out.toDataURL('image/png');
+  return out;
+}
+
+/** Composed correlation as a PNG data URL. */
+export function exportCorrelationPng(
+  bodyEl: HTMLElement,
+  markers: Marker[],
+  depthWindow: [number, number],
+): string | null {
+  return exportCorrelationCanvas(bodyEl, markers, depthWindow)?.toDataURL('image/png') ?? null;
+}
+
+/** Composed correlation as a JPEG data URL (for embedding in PDF). */
+export function exportCorrelationJpeg(
+  bodyEl: HTMLElement,
+  markers: Marker[],
+  depthWindow: [number, number],
+): { dataUrl: string; width: number; height: number } | null {
+  const c = exportCorrelationCanvas(bodyEl, markers, depthWindow);
+  if (!c) return null;
+  return { dataUrl: c.toDataURL('image/jpeg', 0.92), width: c.width, height: c.height };
 }
 
 function dot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, fill: string, stroke: string) {

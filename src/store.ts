@@ -38,16 +38,20 @@ interface AppState {
   projectId: string | null;
   projectName: string;
   projects: ProjectMeta[];
+  /** Per-well hidden track titles / LITHO_KEY (view setting). */
+  hiddenTracks: Record<string, string[]>;
   addLasFiles: (files: FileList | File[]) => Promise<void>;
   loadLasText: (text: string, fileName?: string) => void;
   setActiveWell: (id: string) => void;
   removeWell: (id: string) => void;
   addMarkerAtDepth: (depth: number) => void;
   updateMarkerDepth: (markerId: string, wellId: string, depth: number) => void;
+  removeMarkerDepth: (markerId: string, wellId: string) => void;
   renameMarker: (markerId: string, label: string) => void;
   removeMarker: (markerId: string) => void;
   selectMarker: (id: string | null) => void;
-  replaceProject: (p: { wells: Well[]; markers: Marker[]; activeWellId: string | null }) => void;
+  toggleTrack: (wellId: string, key: string) => void;
+  replaceProject: (p: { wells: Well[]; markers: Marker[]; activeWellId: string | null; hiddenTracks?: Record<string, string[]> }) => void;
   clearAll: () => void;
   importTops: (rows: TopRow[]) => ImportSummary;
   importLithology: (rows: LithoRow[]) => LithoImportSummary;
@@ -61,6 +65,7 @@ export const useStore = create<AppState>((set, get) => ({
   activeWellId: null,
   selectedMarkerId: null,
   error: null,
+  hiddenTracks: {},
   projectId: null,
   projectName: 'Корреляция',
   projects: [],
@@ -82,8 +87,12 @@ export const useStore = create<AppState>((set, get) => ({
       const isDemo = /demo/i.test(fileName ?? '');
       if (isDemo) {
         // Distinct, concept-style names so wells are addressable (e.g. by tops import).
-        well.name = `UT-${1058 + get().wells.length}`;
-        well.lithology = generateDemoLithology(well, get().wells.length + 1);
+        const i = get().wells.length;
+        well.name = `UT-${1058 + i}`;
+        well.lithology = generateDemoLithology(well, i + 1);
+        // Scatter demo wells over a plausible field so the map has real coordinates.
+        well.x = 12000 + (i % 3) * 850 + ((i * 137) % 300);
+        well.y = 48000 + Math.floor(i / 3) * 700 + ((i * 91) % 260);
       }
 
       set((s) => {
@@ -158,6 +167,15 @@ export const useStore = create<AppState>((set, get) => ({
       ),
     })),
 
+  removeMarkerDepth: (markerId, wellId) =>
+    set((s) => ({
+      markers: s.markers.map((m) => {
+        if (m.id !== markerId) return m;
+        const { [wellId]: _drop, ...rest } = m.depths;
+        return { ...m, depths: rest };
+      }),
+    })),
+
   renameMarker: (markerId, label) =>
     set((s) => ({
       markers: s.markers.map((m) => (m.id === markerId ? { ...m, label } : m)),
@@ -171,16 +189,24 @@ export const useStore = create<AppState>((set, get) => ({
 
   selectMarker: (id) => set({ selectedMarkerId: id }),
 
+  toggleTrack: (wellId, key) =>
+    set((s) => {
+      const cur = s.hiddenTracks[wellId] ?? [];
+      const next = cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key];
+      return { hiddenTracks: { ...s.hiddenTracks, [wellId]: next } };
+    }),
+
   replaceProject: (p) =>
     set({
       wells: p.wells,
       markers: p.markers,
       activeWellId: p.activeWellId ?? p.wells[0]?.id ?? null,
+      hiddenTracks: p.hiddenTracks ?? {},
       selectedMarkerId: null,
       error: null,
     }),
 
-  clearAll: () => set({ wells: [], markers: [], activeWellId: null, selectedMarkerId: null, error: null }),
+  clearAll: () => set({ wells: [], markers: [], activeWellId: null, hiddenTracks: {}, selectedMarkerId: null, error: null }),
 
   importTops: (rows) => {
     const state = get();

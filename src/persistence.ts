@@ -24,6 +24,8 @@ export interface ProjectData {
   wells: Well[];
   markers: Marker[];
   activeWellId: string | null;
+  /** View settings: track titles / LITHO_KEY hidden per well. */
+  hiddenTracks?: Record<string, string[]>;
 }
 
 interface AppMeta {
@@ -31,7 +33,7 @@ interface AppMeta {
   list: ProjectMeta[];
 }
 
-const emptyData = (): ProjectData => ({ wells: [], markers: [], activeWellId: null });
+const emptyData = (): ProjectData => ({ wells: [], markers: [], activeWellId: null, hiddenTracks: {} });
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {

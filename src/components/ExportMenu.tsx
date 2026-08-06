@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { Download, Milestone, Layers, Image as ImageIcon } from 'lucide-react';
+import { Download, Milestone, Layers, Image as ImageIcon, FileText } from 'lucide-react';
 import { useStore } from '../store';
 import { buildTopsCsv } from '../export/tops';
 import { buildLithologyCsv } from '../export/lithology';
-import { exportCorrelationPng } from '../export/image';
+import { exportCorrelationPng, exportCorrelationJpeg } from '../export/image';
+import { jpegToPdf } from '../export/pdf';
 import { downloadText, triggerDownload } from '../export/download';
 
 interface Props {
@@ -48,6 +49,15 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
     setOpen(false);
   };
 
+  const exportPdf = () => {
+    const img = bodyRef.current && exportCorrelationJpeg(bodyRef.current, markers, depthWindow);
+    if (img) {
+      const url = URL.createObjectURL(jpegToPdf(img.dataUrl, img.width, img.height));
+      triggerDownload(`correlation-${stamp()}.pdf`, url, true);
+    }
+    setOpen(false);
+  };
+
   return (
     <div className="menu-wrap" ref={ref}>
       <button className="iconbtn" title="Экспорт" onClick={() => setOpen((o) => !o)} disabled={wells.length === 0}>
@@ -63,6 +73,9 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
           </button>
           <button className="menu-item" onClick={exportPng}>
             <ImageIcon size={15} strokeWidth={1.75} /> Планшет (PNG)
+          </button>
+          <button className="menu-item" onClick={exportPdf}>
+            <FileText size={15} strokeWidth={1.75} /> Планшет (PDF)
           </button>
         </div>
       )}
