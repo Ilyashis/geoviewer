@@ -5,6 +5,7 @@ import { idwGrid, contourLevels } from '../geo/grid';
 import { marchingSquares } from '../geo/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../geo/volumetrics';
 import { aggregateZone, DEFAULT_PETRO, type PetroParams } from '../geo/petrophysics';
+import { monteCarlo, makeTriParams } from '../geo/uncertainty';
 
 interface Props {
   wells: Well[];
@@ -51,6 +52,8 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const [petro, setPetro] = useState<PetroParams>(DEFAULT_PETRO);
   const [owcOn, setOwcOn] = useState(false);
   const [owc, setOwc] = useState(0);
+  const [uncOn, setUncOn] = useState(false);
+  const [spread, setSpread] = useState(20);
 
   const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
   const schematic = wells.length > 0 && coordWells.length < wells.length;
@@ -247,6 +250,12 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     [mode, grid, effVol, contact],
   );
 
+  // Probabilistic reserves: Monte-Carlo the recovery chain around the deterministic modes.
+  const mc = useMemo(() => {
+    if (!uncOn || !volResult || volResult.grossM3 <= 0) return null;
+    return monteCarlo(volResult.grossM3, makeTriParams(effVol, spread / 100));
+  }, [uncOn, volResult, effVol, spread]);
+
   if (wells.length === 0) {
     return (
       <div className="placeholder">
@@ -408,6 +417,32 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
               ? `Только порода выше ВНК ${Math.round(owc)} м · замыкание не учитывается.`
               : 'Интеграл по всей площади карты · без учёта контакта.'}
           </div>
+          <div className="vol-owc vol-unc-tog">
+            <label className="vol-owc-tog">
+              <input type="checkbox" checked={uncOn} onChange={(e) => setUncOn(e.target.checked)} />
+              <span>Неопределённость</span>
+            </label>
+            {uncOn && (
+              <label className="vol-owc-depth">
+                <input type="number" step={5} min={0} max={80} value={spread}
+                  onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setSpread(Math.max(0, v)); }} />
+                <span>±%</span>
+              </label>
+            )}
+          </div>
+          {mc && (
+            <>
+              <div className="vol-unc-grid">
+                <span />
+                <span className="vol-unc-h">P90</span><span className="vol-unc-h">P50</span><span className="vol-unc-h">P10</span>
+                <span className="vol-unc-lbl">STOOIP</span>
+                <span>{mbbl(mc.stooip.p90)}</span><b>{mbbl(mc.stooip.p50)}</b><span>{mbbl(mc.stooip.p10)}</span>
+                <span className="vol-unc-lbl">Извлек.</span>
+                <span>{mbbl(mc.recoverable.p90)}</span><b>{mbbl(mc.recoverable.p50)}</b><span>{mbbl(mc.recoverable.p10)}</span>
+              </div>
+              <div className="vol-note">{mc.samples} реализаций · треуг. ±{spread}% · млн барр</div>
+            </>
+          )}
         </aside>
       )}
 
@@ -427,6 +462,11 @@ function fmtM(x: number, unit: string): string {
   if (a >= 1e6) return `${(x / 1e6).toFixed(2)} млн ${unit}`;
   if (a >= 1e3) return `${(x / 1e3).toFixed(1)} тыс ${unit}`;
   return `${Math.round(x)} ${unit}`;
+}
+
+/** Barrels → millions, 2 decimals (grid cells share the "млн барр" caption). */
+function mbbl(x: number): string {
+  return (x / 1e6).toFixed(2);
 }
 
 function VolInput({ label, value, step, onChange }: { label: string; value: number; step: number; onChange: (v: number) => void }) {

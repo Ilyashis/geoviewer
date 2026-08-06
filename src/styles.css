@@ -510,6 +510,17 @@ body {
 .vol-owc-depth input:focus { outline: none; border-color: var(--accent); }
 .vol-owc-depth span { font-size: 11px; color: var(--text-3); font-family: var(--mono); }
 .map-leg-owc { display: inline-block; width: 18px; height: 0; border-top: 2.5px solid rgba(96, 194, 255, 0.95); vertical-align: middle; margin-right: 6px; }
+.vol-unc-tog { margin-top: 10px; margin-bottom: 8px; }
+.vol-unc-grid {
+  display: grid; grid-template-columns: auto 1fr 1fr 1fr; gap: 3px 8px; align-items: baseline;
+  padding: 8px 10px; border-radius: var(--r-sm); background: rgba(58, 163, 201, 0.08); border: 1px solid var(--hairline);
+}
+.vol-unc-grid > span, .vol-unc-grid > b {
+  font-family: var(--mono); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2);
+}
+.vol-unc-grid > b { color: var(--accent-2); font-weight: 600; }
+.vol-unc-h { color: var(--text-3) !important; font-size: 10.5px !important; text-transform: uppercase; letter-spacing: 0.04em; }
+.vol-unc-lbl { text-align: left !important; color: var(--text-2) !important; }
 .vol-in { display: flex; flex-direction: column; gap: 3px; }
 .vol-in span { font-size: 10px; font-family: var(--mono); color: var(--text-3); text-align: center; }
 .vol-in input {
