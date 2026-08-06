@@ -8,7 +8,7 @@ import { uid } from './util/id';
  *    project switcher doesn't have to load every project's data.
  */
 
-const DB_NAME = 'geomate';
+const DB_NAME = 'geoviewer';
 const VERSION = 2;
 const PROJECTS = 'projects';
 const META = 'meta';
