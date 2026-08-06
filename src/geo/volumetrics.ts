@@ -24,17 +24,34 @@ export interface VolResult {
 const M3_TO_BBL = 6.289810;
 
 /**
+ * A fluid contact (e.g. OWC): only rock shallower than `owc` is hydrocarbon-
+ * bearing. `top` is the top-surface structure grid, aligned cell-for-cell to the
+ * isochore (thickness) grid, giving each cell's top depth.
+ */
+export interface Contact {
+  owc: number;
+  top: Grid;
+}
+
+/**
  * Volumetrics from an isochore (thickness) grid: integrate thickness over the
  * mapped area for gross rock volume, then apply N/G · φ · (1−Sw) · 1/Bo.
  * Cell area uses the grid's dx·dy (data coordinate units, assumed metres).
+ *
+ * With a `contact`, each cell contributes only its hydrocarbon column — the part
+ * of [topZ, topZ+thickness] shallower than `owc`: h = clamp(owc − topZ, 0, th).
+ * `area`/`meanThickness` then describe the productive area and HC column.
  */
-export function volumetrics(grid: Grid, p: VolParams): VolResult {
+export function volumetrics(grid: Grid, p: VolParams, contact?: Contact): VolResult {
   const cellArea = grid.dx * grid.dy;
+  const aligned = contact && contact.top.z.length === grid.z.length;
   let gross = 0;
   let area = 0;
   for (let k = 0; k < grid.z.length; k++) {
     const th = grid.z[k];
-    if (th > 0) { gross += th * cellArea; area += cellArea; }
+    if (th <= 0) continue;
+    const h = aligned ? Math.max(0, Math.min(th, contact!.owc - contact!.top.z[k])) : th;
+    if (h > 0) { gross += h * cellArea; area += cellArea; }
   }
   const net = gross * p.ng;
   const pore = net * p.phi;

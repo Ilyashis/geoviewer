@@ -3,7 +3,7 @@ import { Navigation } from 'lucide-react';
 import type { Marker, Well } from '../types';
 import { idwGrid, contourLevels } from '../geo/grid';
 import { marchingSquares } from '../geo/contours';
-import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams } from '../geo/volumetrics';
+import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../geo/volumetrics';
 import { aggregateZone, DEFAULT_PETRO, type PetroParams } from '../geo/petrophysics';
 
 interface Props {
@@ -49,6 +49,8 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const [vol, setVol] = useState<VolParams>(DEFAULT_VOL_PARAMS);
   const [useLogs, setUseLogs] = useState(false);
   const [petro, setPetro] = useState<PetroParams>(DEFAULT_PETRO);
+  const [owcOn, setOwcOn] = useState(false);
+  const [owc, setOwc] = useState(0);
 
   const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
   const schematic = wells.length > 0 && coordWells.length < wells.length;
@@ -118,14 +120,37 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     return { minX, maxX, minY, maxY, scale, toPx, pts: positions.map((p) => ({ ...p, ...toPx(p.x, p.y) })) };
   }, [positions, size]);
 
-  // Grid the field once (data space, resolution independent of pixel size).
-  const grid = useMemo(() => {
-    if (!field || !layout) return null;
+  // Shared mesh (data space, resolution independent of pixel size) so the field
+  // grid and any structure grid align cell-for-cell.
+  const gridGeom = useMemo(() => {
+    if (!layout) return null;
     const padX = (layout.maxX - layout.minX) * 0.12 || 100, padY = (layout.maxY - layout.minY) * 0.12 || 100;
     const minX = layout.minX - padX, maxX = layout.maxX + padX, minY = layout.minY - padY, maxY = layout.maxY + padY;
     const nx = 130, ny = Math.max(20, Math.round(130 * ((maxY - minY) / (maxX - minX))));
-    return idwGrid(field.points, minX, maxX, minY, maxY, nx, ny);
-  }, [field, layout]);
+    return { minX, maxX, minY, maxY, nx, ny };
+  }, [layout]);
+
+  const grid = useMemo(() => {
+    if (!field || !gridGeom) return null;
+    const g = gridGeom;
+    return idwGrid(field.points, g.minX, g.maxX, g.minY, g.maxY, g.nx, g.ny);
+  }, [field, gridGeom]);
+
+  // Top-surface structure on the same mesh — depths for the OWC clip.
+  const topGrid = useMemo(() => {
+    if (mode !== 'isochore' || !top || !gridGeom) return null;
+    const points = coordWells
+      .filter((w) => Number.isFinite(top.depths[w.id]))
+      .map((w) => ({ x: w.x!, y: w.y!, z: top.depths[w.id] }));
+    if (points.length < 3) return null;
+    const g = gridGeom;
+    return idwGrid(points, g.minX, g.maxX, g.minY, g.maxY, g.nx, g.ny);
+  }, [mode, top, coordWells, gridGeom]);
+
+  const contact = useMemo<Contact | undefined>(
+    () => (owcOn && topGrid && owc > 0 ? { owc, top: topGrid } : undefined),
+    [owcOn, topGrid, owc],
+  );
 
   // --- Draw the gridded field (fill + contours) ---
   useEffect(() => {
@@ -167,7 +192,31 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       }
       ctx.stroke();
     }
-  }, [grid, field, layout, size]);
+
+    // OWC: flood the water leg (top deeper than the contact) and draw the contact line.
+    if (contact && contact.top.z.length === grid.z.length) {
+      const tg = contact.top;
+      ctx.fillStyle = 'rgba(18, 42, 74, 0.5)';
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++) {
+          if (grid.z[j * nx + i] > 0 && tg.z[j * nx + i] >= contact.owc) {
+            const x = minX + i * dx, y = minY + j * dy;
+            const p = toPx(x, y), p2 = toPx(x + dx, y - dy);
+            ctx.fillRect(p.px - 0.5, p.py - 0.5, p2.px - p.px + 1, p2.py - p.py + 1);
+          }
+        }
+      }
+      ctx.strokeStyle = 'rgba(96, 194, 255, 0.95)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      for (const s of marchingSquares(tg, contact.owc)) {
+        const a = toPx(minX + s.i0 * dx, minY + s.j0 * dy);
+        const b = toPx(minX + s.i1 * dx, minY + s.j1 * dy);
+        ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py);
+      }
+      ctx.stroke();
+    }
+  }, [grid, field, layout, size, contact]);
 
   // Log-derived net-pay stats for the isochore zone [top, base] across the mapped wells.
   const logStats = useMemo(() => {
@@ -180,9 +229,22 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     [useLogs, logStats, vol],
   );
 
+  // Suggested contact: partway down the top-surface depth range, so a closure exists.
+  const owcDefault = useMemo(() => {
+    if (mode !== 'isochore' || !top) return 0;
+    const zs = coordWells.map((w) => top.depths[w.id]).filter((z) => Number.isFinite(z)) as number[];
+    if (zs.length < 3) return 0;
+    const lo = Math.min(...zs), hi = Math.max(...zs);
+    return Math.round(lo + 0.55 * (hi - lo));
+  }, [mode, top, coordWells]);
+
+  useEffect(() => {
+    if (owcOn && owc === 0 && owcDefault > 0) setOwc(owcDefault);
+  }, [owcOn, owc, owcDefault]);
+
   const volResult = useMemo(
-    () => (mode === 'isochore' && grid ? volumetrics(grid, effVol) : null),
-    [mode, grid, effVol],
+    () => (mode === 'isochore' && grid ? volumetrics(grid, effVol, contact) : null),
+    [mode, grid, effVol, contact],
   );
 
   if (wells.length === 0) {
@@ -273,6 +335,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
               <div className="map-leg-ends"><span>{Math.round(field.vmin)}</span><span>{Math.round(field.vmax)}</span></div>
             </div>
             <div className="map-leg-row"><span className="map-leg-line" /> профиль · изолинии</div>
+            {contact && <div className="map-leg-row"><span className="map-leg-owc" /> ВНК {Math.round(owc)} м</div>}
           </>
         ) : (
           <div className="map-leg-row"><span className="map-leg-line" /> профиль корреляции</div>
@@ -317,16 +380,34 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
               </div>
             </>
           )}
+          <div className="vol-owc">
+            <label className="vol-owc-tog">
+              <input type="checkbox" checked={owcOn} onChange={(e) => setOwcOn(e.target.checked)} />
+              <span>Контакт ВНК</span>
+            </label>
+            {owcOn && (
+              <label className="vol-owc-depth">
+                <input type="number" step={1} value={owc}
+                  onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setOwc(v); }} />
+                <span>м</span>
+              </label>
+            )}
+          </div>
+          {owcOn && !topGrid && <div className="vol-note">Нет структуры кровли — контакт не применён.</div>}
           <div className="vol-results">
-            <VolRow k="Площадь" v={`${volResult.areaKm2.toFixed(2)} км²`} />
-            <VolRow k="Ср. толщина" v={`${volResult.meanThickness.toFixed(1)} м`} />
-            <VolRow k="Объём породы (GRV)" v={fmtM(volResult.grossM3, 'м³')} />
+            <VolRow k={contact ? 'Площадь в ВНК' : 'Площадь'} v={`${volResult.areaKm2.toFixed(2)} км²`} />
+            <VolRow k={contact ? 'Ср. HC-толщина' : 'Ср. толщина'} v={`${volResult.meanThickness.toFixed(1)} м`} />
+            <VolRow k={contact ? 'HC объём (GRV)' : 'Объём породы (GRV)'} v={fmtM(volResult.grossM3, 'м³')} />
             <VolRow k="УВ поровый (HCPV)" v={fmtM(volResult.hcpvM3, 'м³')} />
             <VolRow k="STOOIP" v={fmtM(volResult.stooipM3, 'м³')} strong />
             <VolRow k="STOOIP" v={fmtM(volResult.stooipBbl, 'барр')} />
             <VolRow k="Извлекаемые" v={fmtM(volResult.recoverableBbl, 'барр')} strong />
           </div>
-          <div className="vol-note">Интеграл по площади карты (без учёта контакта/замыкания).</div>
+          <div className="vol-note">
+            {contact
+              ? `Только порода выше ВНК ${Math.round(owc)} м · замыкание не учитывается.`
+              : 'Интеграл по всей площади карты · без учёта контакта.'}
+          </div>
         </aside>
       )}
 

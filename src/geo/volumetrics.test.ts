@@ -23,6 +23,35 @@ describe('volumetrics', () => {
     expect(r.recoverableBbl).toBeCloseTo(r.stooipBbl * 0.3, 4);
   });
 
+  it('clips gross volume to the hydrocarbon column above a contact', () => {
+    const th = flatGrid(10);
+    // Top surface flat at 2000 → base at 2010.
+    const top: Grid = { ...flatGrid(2000) };
+    const p = { ng: 1, phi: 1, sw: 0, bo: 1, rf: 1 };
+
+    // OWC below the base: whole thickness counts.
+    expect(volumetrics(th, p, { owc: 2020, top }).grossM3).toBeCloseTo(400000, 3);
+    // OWC halfway: 5 m HC column.
+    const half = volumetrics(th, p, { owc: 2005, top });
+    expect(half.grossM3).toBeCloseTo(200000, 3);
+    expect(half.meanThickness).toBeCloseTo(5, 6);
+    expect(half.areaKm2).toBeCloseTo(0.04, 6);
+    // OWC above the top: nothing counts (all water).
+    const dry = volumetrics(th, p, { owc: 1990, top });
+    expect(dry.grossM3).toBe(0);
+    expect(dry.areaKm2).toBe(0);
+  });
+
+  it('drops cells whose top is below the contact from the productive area', () => {
+    const th = flatGrid(10);
+    // Two cells crest at 2000, two at 2012 (below a 2006 contact).
+    const top: Grid = { z: new Float64Array([2000, 2000, 2012, 2012]), nx: 2, ny: 2, minX: 0, minY: 0, dx: 100, dy: 100, zmin: 2000, zmax: 2012 };
+    const r = volumetrics(th, { ng: 1, phi: 1, sw: 0, bo: 1, rf: 1 }, { owc: 2006, top });
+    // Only the two crestal cells: HC column 6 m each → 2·6·10000 = 120000.
+    expect(r.grossM3).toBeCloseTo(120000, 3);
+    expect(r.areaKm2).toBeCloseTo(0.02, 6);
+  });
+
   it('ignores non-positive thickness cells', () => {
     const z = new Float64Array([10, -5, 0, 10]);
     const grid: Grid = { z, nx: 2, ny: 2, minX: 0, minY: 0, dx: 100, dy: 100, zmin: -5, zmax: 10 };
