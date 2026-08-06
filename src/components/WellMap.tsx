@@ -3,6 +3,7 @@ import { Navigation } from 'lucide-react';
 import type { Marker, Well } from '../types';
 import { idwGrid, contourLevels } from '../geo/grid';
 import { marchingSquares } from '../geo/contours';
+import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams } from '../geo/volumetrics';
 
 interface Props {
   wells: Well[];
@@ -44,6 +45,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const [surfaceId, setSurfaceId] = useState<string | null>(null);
   const [topId, setTopId] = useState<string | null>(null);
   const [baseId, setBaseId] = useState<string | null>(null);
+  const [vol, setVol] = useState<VolParams>(DEFAULT_VOL_PARAMS);
 
   const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
   const schematic = wells.length > 0 && coordWells.length < wells.length;
@@ -113,6 +115,15 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     return { minX, maxX, minY, maxY, scale, toPx, pts: positions.map((p) => ({ ...p, ...toPx(p.x, p.y) })) };
   }, [positions, size]);
 
+  // Grid the field once (data space, resolution independent of pixel size).
+  const grid = useMemo(() => {
+    if (!field || !layout) return null;
+    const padX = (layout.maxX - layout.minX) * 0.12 || 100, padY = (layout.maxY - layout.minY) * 0.12 || 100;
+    const minX = layout.minX - padX, maxX = layout.maxX + padX, minY = layout.minY - padY, maxY = layout.maxY + padY;
+    const nx = 130, ny = Math.max(20, Math.round(130 * ((maxY - minY) / (maxX - minX))));
+    return idwGrid(field.points, minX, maxX, minY, maxY, nx, ny);
+  }, [field, layout]);
+
   // --- Draw the gridded field (fill + contours) ---
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -124,22 +135,18 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.w, size.h);
-    if (!field) return;
-
-    const padX = (layout.maxX - layout.minX) * 0.12 || 100, padY = (layout.maxY - layout.minY) * 0.12 || 100;
-    const minX = layout.minX - padX, maxX = layout.maxX + padX, minY = layout.minY - padY, maxY = layout.maxY + padY;
-    const nx = 130, ny = Math.max(20, Math.round(130 * ((maxY - minY) / (maxX - minX))));
-    const grid = idwGrid(field.points, minX, maxX, minY, maxY, nx, ny);
+    if (!grid || !field) return;
 
     const { vmin, vmax } = field;
     const vt = (v: number) => (vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5);
     const toPx = layout.toPx;
+    const { nx, ny, dx, dy, minX, minY } = grid;
 
     ctx.globalAlpha = 0.82;
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
-        const x = minX + i * grid.dx, y = minY + j * grid.dy;
-        const p = toPx(x, y), p2 = toPx(x + grid.dx, y - grid.dy);
+        const x = minX + i * dx, y = minY + j * dy;
+        const p = toPx(x, y), p2 = toPx(x + dx, y - dy);
         ctx.fillStyle = rampColor(vt(grid.z[j * nx + i]));
         ctx.fillRect(p.px - 0.5, p.py - 0.5, p2.px - p.px + 1, p2.py - p.py + 1);
       }
@@ -151,13 +158,18 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     for (const level of contourLevels(vmin, vmax, 9)) {
       ctx.beginPath();
       for (const s of marchingSquares(grid, level)) {
-        const a = toPx(minX + s.i0 * grid.dx, minY + s.j0 * grid.dy);
-        const b = toPx(minX + s.i1 * grid.dx, minY + s.j1 * grid.dy);
+        const a = toPx(minX + s.i0 * dx, minY + s.j0 * dy);
+        const b = toPx(minX + s.i1 * dx, minY + s.j1 * dy);
         ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py);
       }
       ctx.stroke();
     }
-  }, [field, layout, size]);
+  }, [grid, field, layout, size]);
+
+  const volResult = useMemo(
+    () => (mode === 'isochore' && grid ? volumetrics(grid, vol) : null),
+    [mode, grid, vol],
+  );
 
   if (wells.length === 0) {
     return (
@@ -253,6 +265,29 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
         )}
       </div>
 
+      {volResult && field && (
+        <aside className="vol-panel">
+          <div className="vol-head">Подсчёт запасов · {field.title.split(' ·')[0]}</div>
+          <div className="vol-params">
+            <VolInput label="N/G" value={vol.ng} step={0.05} onChange={(v) => setVol({ ...vol, ng: v })} />
+            <VolInput label="φ" value={vol.phi} step={0.05} onChange={(v) => setVol({ ...vol, phi: v })} />
+            <VolInput label="Sw" value={vol.sw} step={0.05} onChange={(v) => setVol({ ...vol, sw: v })} />
+            <VolInput label="Bo" value={vol.bo} step={0.05} onChange={(v) => setVol({ ...vol, bo: v })} />
+            <VolInput label="ККИН" value={vol.rf} step={0.05} onChange={(v) => setVol({ ...vol, rf: v })} />
+          </div>
+          <div className="vol-results">
+            <VolRow k="Площадь" v={`${volResult.areaKm2.toFixed(2)} км²`} />
+            <VolRow k="Ср. толщина" v={`${volResult.meanThickness.toFixed(1)} м`} />
+            <VolRow k="Объём породы (GRV)" v={fmtM(volResult.grossM3, 'м³')} />
+            <VolRow k="УВ поровый (HCPV)" v={fmtM(volResult.hcpvM3, 'м³')} />
+            <VolRow k="STOOIP" v={fmtM(volResult.stooipM3, 'м³')} strong />
+            <VolRow k="STOOIP" v={fmtM(volResult.stooipBbl, 'барр')} />
+            <VolRow k="Извлекаемые" v={fmtM(volResult.recoverableBbl, 'барр')} strong />
+          </div>
+          <div className="vol-note">Интеграл по площади карты (без учёта контакта/замыкания).</div>
+        </aside>
+      )}
+
       {schematic && <div className="map-badge">Условная раскладка — координаты не заданы</div>}
       {!schematic && mappable.length === 0 && (
         <div className="map-badge">Для карт нужны ≥3 скважины с пикировкой одного пласта</div>
@@ -260,6 +295,32 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       {!schematic && mode === 'isochore' && mappable.length >= 2 && !field && (
         <div className="map-badge">Мало общих пикировок для изохоры — выберите два пласта с ≥3 общими скважинами</div>
       )}
+    </div>
+  );
+}
+
+function fmtM(x: number, unit: string): string {
+  const a = Math.abs(x);
+  if (a >= 1e6) return `${(x / 1e6).toFixed(2)} млн ${unit}`;
+  if (a >= 1e3) return `${(x / 1e3).toFixed(1)} тыс ${unit}`;
+  return `${Math.round(x)} ${unit}`;
+}
+
+function VolInput({ label, value, step, onChange }: { label: string; value: number; step: number; onChange: (v: number) => void }) {
+  return (
+    <label className="vol-in">
+      <span>{label}</span>
+      <input type="number" step={step} min={0} value={value}
+        onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) onChange(v); }} />
+    </label>
+  );
+}
+
+function VolRow({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
+  return (
+    <div className={`vol-row ${strong ? 'strong' : ''}`}>
+      <span className="vol-k">{k}</span>
+      <span className="vol-v">{v}</span>
     </div>
   );
 }
