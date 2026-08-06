@@ -521,6 +521,13 @@ body {
 .vol-unc-grid > b { color: var(--accent-2); font-weight: 600; }
 .vol-unc-h { color: var(--text-3) !important; font-size: 10.5px !important; text-transform: uppercase; letter-spacing: 0.04em; }
 .vol-unc-lbl { text-align: left !important; color: var(--text-2) !important; }
+.vol-export { display: flex; gap: 6px; margin-top: 12px; }
+.vol-exp-btn {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 6px 0; font-size: 12px; border-radius: var(--r-sm);
+  background: var(--canvas); border: 1px solid var(--border); color: var(--text-2); cursor: pointer;
+}
+.vol-exp-btn:hover { color: var(--text); border-color: var(--accent); }
 .vol-in { display: flex; flex-direction: column; gap: 3px; }
 .vol-in span { font-size: 10px; font-family: var(--mono); color: var(--text-3); text-align: center; }
 .vol-in input {

@@ -6,6 +6,10 @@ import { marchingSquares } from '../geo/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../geo/volumetrics';
 import { aggregateZone, DEFAULT_PETRO, type PetroParams } from '../geo/petrophysics';
 import { monteCarlo, makeTriParams } from '../geo/uncertainty';
+import { buildReservesCsv, renderReservesJpeg, type ReservesInput } from '../export/reserves';
+import { jpegToPdf } from '../export/pdf';
+import { downloadText, triggerDownload } from '../export/download';
+import { FileText, Table } from 'lucide-react';
 
 interface Props {
   wells: Well[];
@@ -256,6 +260,33 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     return monteCarlo(volResult.grossM3, makeTriParams(effVol, spread / 100));
   }, [uncOn, volResult, effVol, spread]);
 
+  const reservesInput = (): ReservesInput | null => {
+    if (!volResult || !field) return null;
+    return {
+      zone: field.title.split(' ·')[0],
+      source: useLogs && logStats ? 'logs' : 'manual',
+      wellCount: coordWells.length,
+      logWells: logStats?.wellsUsed,
+      params: effVol,
+      owc: contact ? owc : null,
+      det: volResult,
+      mc,
+      spreadPct: uncOn ? spread : undefined,
+      date: new Date().toISOString().slice(0, 16).replace('T', ' '),
+    };
+  };
+  const fileStamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  const exportReservesCsv = () => {
+    const r = reservesInput();
+    if (r) downloadText(`reserves-${fileStamp()}.csv`, buildReservesCsv(r));
+  };
+  const exportReservesPdf = () => {
+    const r = reservesInput();
+    if (!r) return;
+    const img = renderReservesJpeg(r);
+    triggerDownload(`reserves-${fileStamp()}.pdf`, URL.createObjectURL(jpegToPdf(img.dataUrl, img.width, img.height)), true);
+  };
+
   if (wells.length === 0) {
     return (
       <div className="placeholder">
@@ -443,6 +474,14 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
               <div className="vol-note">{mc.samples} реализаций · треуг. ±{spread}% · млн барр</div>
             </>
           )}
+          <div className="vol-export">
+            <button className="vol-exp-btn" onClick={exportReservesCsv} title="Отчёт о запасах в CSV">
+              <Table size={13} strokeWidth={1.9} /> CSV
+            </button>
+            <button className="vol-exp-btn" onClick={exportReservesPdf} title="Отчёт о запасах в PDF">
+              <FileText size={13} strokeWidth={1.9} /> PDF
+            </button>
+          </div>
         </aside>
       )}
 
