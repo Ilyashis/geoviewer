@@ -12,46 +12,86 @@ interface Props {
 }
 
 const PAD = 64;
+type Mode = 'structure' | 'isochore';
 
 interface Pos { id: string; name: string; x: number; y: number }
 
-/** Shallow→deep structural colour ramp (red high → blue low). */
+/** Two-hue ramp, low→high value. */
 const RAMP: [number, number, number][] = [
   [214, 69, 69], [232, 145, 58], [232, 207, 58], [91, 184, 91], [58, 163, 201], [58, 107, 201],
 ];
 function rampColor(t: number): string {
   const c = Math.max(0, Math.min(0.999, t)) * (RAMP.length - 1);
-  const i = Math.floor(c);
-  const f = c - i;
+  const i = Math.floor(c), f = c - i;
   const a = RAMP[i], b = RAMP[i + 1] ?? RAMP[i];
   return `rgb(${Math.round(a[0] + (b[0] - a[0]) * f)},${Math.round(a[1] + (b[1] - a[1]) * f)},${Math.round(a[2] + (b[2] - a[2]) * f)})`;
 }
 
-/** Plan-view map: wells, correlation profile, and a structural surface from tops. */
+interface Field {
+  points: { x: number; y: number; z: number }[];
+  byWell: Record<string, number>;
+  vmin: number;
+  vmax: number;
+  title: string;
+}
+
+/** Plan-view map: wells, profile, and a gridded surface (structure or isochore). */
 export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
-
-  const { positions, schematic } = useMemo(() => {
-    const allReal = wells.length > 0 && wells.every((w) => Number.isFinite(w.x) && Number.isFinite(w.y));
-    if (allReal) return { positions: wells.map((w) => ({ id: w.id, name: w.name, x: w.x!, y: w.y! })), schematic: false };
-    const pos: Pos[] = wells.map((w, i) => ({ id: w.id, name: w.name, x: i * 100, y: ((i * 53) % 44) - 22 }));
-    return { positions: pos, schematic: true };
-  }, [wells]);
-
-  // Surfaces mappable from tops: real coords + ≥3 wells picked.
-  const surfaces = useMemo(() => {
-    if (schematic) return [];
-    const coord = new Set(wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)).map((w) => w.id));
-    return markers
-      .map((m) => ({ m, n: Object.keys(m.depths).filter((id) => coord.has(id) && Number.isFinite(m.depths[id])).length }))
-      .filter((s) => s.n >= 3)
-      .map((s) => s.m);
-  }, [markers, wells, schematic]);
-
+  const [mode, setMode] = useState<Mode>('structure');
   const [surfaceId, setSurfaceId] = useState<string | null>(null);
-  const surface = surfaces.find((m) => m.id === surfaceId) ?? surfaces[0] ?? null;
+  const [topId, setTopId] = useState<string | null>(null);
+  const [baseId, setBaseId] = useState<string | null>(null);
+
+  const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
+  const schematic = wells.length > 0 && coordWells.length < wells.length;
+
+  const { positions } = useMemo(() => {
+    if (!schematic) return { positions: wells.map((w) => ({ id: w.id, name: w.name, x: w.x!, y: w.y! })) };
+    const pos: Pos[] = wells.map((w, i) => ({ id: w.id, name: w.name, x: i * 100, y: ((i * 53) % 44) - 22 }));
+    return { positions: pos };
+  }, [wells, schematic]);
+
+  // Markers mappable as a surface: ≥3 wells with coords and a pick.
+  const mappable = useMemo(() => {
+    if (schematic) return [];
+    const coordIds = new Set(coordWells.map((w) => w.id));
+    return markers.filter(
+      (m) => Object.keys(m.depths).filter((id) => coordIds.has(id) && Number.isFinite(m.depths[id])).length >= 3
+    );
+  }, [markers, coordWells, schematic]);
+
+  const surface = mappable.find((m) => m.id === surfaceId) ?? mappable[0] ?? null;
+  const top = mappable.find((m) => m.id === topId) ?? mappable[0] ?? null;
+  const base = mappable.find((m) => m.id === baseId) ?? mappable.find((m) => m.id !== top?.id) ?? null;
+
+  const field = useMemo<Field | null>(() => {
+    const build = (fn: (w: Well) => number | null, title: string): Field | null => {
+      const points: Field['points'] = [];
+      const byWell: Record<string, number> = {};
+      for (const w of coordWells) {
+        const z = fn(w);
+        if (z == null || !Number.isFinite(z)) continue;
+        points.push({ x: w.x!, y: w.y!, z });
+        byWell[w.id] = z;
+      }
+      if (points.length < 3) return null;
+      const zs = points.map((p) => p.z);
+      return { points, byWell, vmin: Math.min(...zs), vmax: Math.max(...zs), title };
+    };
+
+    if (mode === 'structure') {
+      if (!surface) return null;
+      return build((w) => (Number.isFinite(surface.depths[w.id]) ? surface.depths[w.id] : null), `${surface.label} · глубина, м`);
+    }
+    if (!top || !base || top.id === base.id) return null;
+    return build((w) => {
+      const t = top.depths[w.id], b = base.depths[w.id];
+      return Number.isFinite(t) && Number.isFinite(b) ? b - t : null;
+    }, `${top.label}–${base.label} · толщина, м`);
+  }, [mode, surface, top, base, coordWells]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -65,8 +105,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const layout = useMemo(() => {
     if (positions.length === 0) return null;
     const xs = positions.map((p) => p.x), ys = positions.map((p) => p.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
     const spanX = Math.max(maxX - minX, 1), spanY = Math.max(maxY - minY, 1);
     const scale = Math.min((size.w - 2 * PAD) / spanX, (size.h - 2 * PAD) / spanY);
     const ox = (size.w - spanX * scale) / 2, oy = (size.h - spanY * scale) / 2;
@@ -74,14 +113,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     return { minX, maxX, minY, maxY, scale, toPx, pts: positions.map((p) => ({ ...p, ...toPx(p.x, p.y) })) };
   }, [positions, size]);
 
-  // --- Draw the structural surface (fill + contours) on the canvas ---
-  const zrange = useMemo<[number, number] | null>(() => {
-    if (!surface) return null;
-    const zs = wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y))
-      .map((w) => surface.depths[w.id]).filter(Number.isFinite) as number[];
-    return zs.length >= 3 ? [Math.min(...zs), Math.max(...zs)] : null;
-  }, [surface, wells]);
-
+  // --- Draw the gridded field (fill + contours) ---
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !layout) return;
@@ -92,57 +124,47 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.w, size.h);
-    if (!surface || !zrange) return;
+    if (!field) return;
 
-    const pts = wells
-      .filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y) && Number.isFinite(surface.depths[w.id]))
-      .map((w) => ({ x: w.x!, y: w.y!, z: surface.depths[w.id] }));
-    if (pts.length < 3) return;
-
-    // Grid over the wells' bbox, padded ~12%.
-    const gx0 = layout.minX, gx1 = layout.maxX, gy0 = layout.minY, gy1 = layout.maxY;
-    const padX = (gx1 - gx0) * 0.12 || 100, padY = (gy1 - gy0) * 0.12 || 100;
-    const minX = gx0 - padX, maxX = gx1 + padX, minY = gy0 - padY, maxY = gy1 + padY;
+    const padX = (layout.maxX - layout.minX) * 0.12 || 100, padY = (layout.maxY - layout.minY) * 0.12 || 100;
+    const minX = layout.minX - padX, maxX = layout.maxX + padX, minY = layout.minY - padY, maxY = layout.maxY + padY;
     const nx = 130, ny = Math.max(20, Math.round(130 * ((maxY - minY) / (maxX - minX))));
-    const grid = idwGrid(pts, minX, maxX, minY, maxY, nx, ny);
+    const grid = idwGrid(field.points, minX, maxX, minY, maxY, nx, ny);
 
-    const [zmin, zmax] = zrange;
-    const zt = (z: number) => (zmax > zmin ? (z - zmin) / (zmax - zmin) : 0.5);
-    const dataToPx = layout.toPx;
+    const { vmin, vmax } = field;
+    const vt = (v: number) => (vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5);
+    const toPx = layout.toPx;
 
-    // Filled cells.
     ctx.globalAlpha = 0.82;
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
         const x = minX + i * grid.dx, y = minY + j * grid.dy;
-        const p = dataToPx(x, y);
-        const p2 = dataToPx(x + grid.dx, y - grid.dy);
-        ctx.fillStyle = rampColor(zt(grid.z[j * nx + i]));
+        const p = toPx(x, y), p2 = toPx(x + grid.dx, y - grid.dy);
+        ctx.fillStyle = rampColor(vt(grid.z[j * nx + i]));
         ctx.fillRect(p.px - 0.5, p.py - 0.5, p2.px - p.px + 1, p2.py - p.py + 1);
       }
     }
     ctx.globalAlpha = 1;
 
-    // Contour iso-lines at nice depth levels.
     ctx.strokeStyle = 'rgba(255,255,255,0.55)';
     ctx.lineWidth = 1;
-    for (const level of contourLevels(zmin, zmax, 9)) {
+    for (const level of contourLevels(vmin, vmax, 9)) {
       ctx.beginPath();
       for (const s of marchingSquares(grid, level)) {
-        const a = dataToPx(minX + s.i0 * grid.dx, minY + s.j0 * grid.dy);
-        const b = dataToPx(minX + s.i1 * grid.dx, minY + s.j1 * grid.dy);
+        const a = toPx(minX + s.i0 * grid.dx, minY + s.j0 * grid.dy);
+        const b = toPx(minX + s.i1 * grid.dx, minY + s.j1 * grid.dy);
         ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py);
       }
       ctx.stroke();
     }
-  }, [surface, zrange, layout, size, wells]);
+  }, [field, layout, size]);
 
   if (wells.length === 0) {
     return (
       <div className="placeholder">
         <div className="pc">
           <h3>Карта</h3>
-          <p>Загрузите скважины — здесь появится их расположение, профиль и структурная карта по кровлям.</p>
+          <p>Загрузите скважины — здесь появится их расположение, профиль и карты по кровлям (структура, толщины).</p>
         </div>
       </div>
     );
@@ -150,6 +172,16 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
 
   const pts = layout?.pts ?? [];
   const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`).join(' ');
+
+  const SurfBtns = ({ selId, onSel }: { selId: string | undefined; onSel: (id: string) => void }) => (
+    <>
+      {mappable.map((m) => (
+        <button key={m.id} className={`map-surf ${m.id === selId ? 'on' : ''}`} onClick={() => onSel(m.id)}>
+          <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
+        </button>
+      ))}
+    </>
+  );
 
   return (
     <div className="map" ref={wrapRef}>
@@ -161,8 +193,8 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
         )}
         {pts.map((p) => {
           const active = p.id === activeWellId;
-          const flip = p.px > size.w - (p.name.length * 8 + 30);
-          const depth = surface?.depths[p.id];
+          const flip = p.px > size.w - (p.name.length * 8 + 34);
+          const v = field?.byWell[p.id];
           return (
             <g key={p.id} className="map-well" onClick={() => onActivate(p.id)}>
               <circle cx={p.px} cy={p.py} r={active ? 9 : 7}
@@ -170,36 +202,51 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
                 stroke={active ? '#fff' : 'var(--accent)'} strokeWidth={active ? 2 : 1.5} />
               <text x={p.px + (flip ? -13 : 13)} y={p.py + 4} textAnchor={flip ? 'end' : 'start'}
                 className={`map-label ${active ? 'on' : ''}`}>
-                {p.name}{Number.isFinite(depth) ? `  ${Math.round(depth as number)}` : ''}
+                {p.name}{Number.isFinite(v) ? `  ${Math.round(v as number)}` : ''}
               </text>
             </g>
           );
         })}
       </svg>
 
-      {surfaces.length > 0 && (
-        <div className="map-surfaces">
-          <span className="map-surfaces-label">Поверхность</span>
-          {surfaces.map((m) => (
-            <button key={m.id} className={`map-surf ${m.id === surface?.id ? 'on' : ''}`}
-              onClick={() => setSurfaceId(m.id)}>
-              <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
-            </button>
-          ))}
+      {mappable.length > 0 && (
+        <div className="map-panel">
+          <div className="map-mode">
+            <button className={`map-mode-btn ${mode === 'structure' ? 'on' : ''}`} onClick={() => setMode('structure')}>Структура</button>
+            <button className={`map-mode-btn ${mode === 'isochore' ? 'on' : ''}`} onClick={() => setMode('isochore')}
+              disabled={mappable.length < 2}>Изохора</button>
+          </div>
+          {mode === 'structure' ? (
+            <div className="map-surf-row">
+              <span className="map-row-label">Пласт</span>
+              <SurfBtns selId={surface?.id} onSel={setSurfaceId} />
+            </div>
+          ) : (
+            <>
+              <div className="map-surf-row">
+                <span className="map-row-label">Кровля</span>
+                <SurfBtns selId={top?.id} onSel={setTopId} />
+              </div>
+              <div className="map-surf-row">
+                <span className="map-row-label">Подошва</span>
+                <SurfBtns selId={base?.id} onSel={setBaseId} />
+              </div>
+            </>
+          )}
         </div>
       )}
 
       <div className="map-north"><Navigation size={16} strokeWidth={1.9} /> С</div>
 
       <div className="map-legend">
-        {surface && zrange ? (
+        {field ? (
           <>
-            <div className="map-leg-title">{surface.label} · глубина, м</div>
+            <div className="map-leg-title">{field.title}</div>
             <div className="map-leg-ramp">
               <span className="map-leg-bar" />
-              <div className="map-leg-ends"><span>{Math.round(zrange[0])}</span><span>{Math.round(zrange[1])}</span></div>
+              <div className="map-leg-ends"><span>{Math.round(field.vmin)}</span><span>{Math.round(field.vmax)}</span></div>
             </div>
-            <div className="map-leg-row"><span className="map-leg-line" /> профиль · изогипсы</div>
+            <div className="map-leg-row"><span className="map-leg-line" /> профиль · изолинии</div>
           </>
         ) : (
           <div className="map-leg-row"><span className="map-leg-line" /> профиль корреляции</div>
@@ -207,8 +254,11 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       </div>
 
       {schematic && <div className="map-badge">Условная раскладка — координаты не заданы</div>}
-      {!schematic && surfaces.length === 0 && (
-        <div className="map-badge">Для структурной карты нужны ≥3 скважины с пикировкой одного пласта</div>
+      {!schematic && mappable.length === 0 && (
+        <div className="map-badge">Для карт нужны ≥3 скважины с пикировкой одного пласта</div>
+      )}
+      {!schematic && mode === 'isochore' && mappable.length >= 2 && !field && (
+        <div className="map-badge">Мало общих пикировок для изохоры — выберите два пласта с ≥3 общими скважинами</div>
       )}
     </div>
   );
