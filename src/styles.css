@@ -444,7 +444,33 @@ body {
 /* ---------- Map ---------- */
 .map { flex: 1; position: relative; overflow: hidden; background:
   radial-gradient(1200px 700px at 50% 40%, rgba(16,161,255,0.04), transparent 70%), var(--canvas); }
-.map-svg { display: block; }
+.map-canvas { position: absolute; inset: 0; display: block; }
+.map-svg { position: absolute; inset: 0; display: block; }
+
+/* surface selector */
+.map-surfaces {
+  position: absolute; top: 16px; left: 18px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  background: rgba(27, 33, 39, 0.82); backdrop-filter: blur(10px);
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 6px 8px; max-width: 60%;
+}
+.map-surfaces-label { font-size: 11px; font-family: var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); margin-right: 2px; }
+.map-surf {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border: 1px solid var(--border); border-radius: 100px;
+  color: var(--text-2); font-size: 12px; padding: 4px 10px; cursor: pointer;
+}
+.map-surf:hover { color: var(--text); background: var(--stripe); }
+.map-surf.on { color: var(--text); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--accent); }
+.map-surf-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+.map-leg-title { color: var(--text-2); font-size: 11px; font-family: var(--mono); margin-bottom: 6px; }
+.map-leg-ramp { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
+.map-leg-bar {
+  width: 150px; height: 10px; border-radius: 3px;
+  background: linear-gradient(90deg, rgb(214,69,69), rgb(232,145,58), rgb(232,207,58), rgb(91,184,91), rgb(58,163,201), rgb(58,107,201));
+}
+.map-leg-ends { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; color: var(--text-3); }
+.map-leg-row { display: flex; align-items: center; gap: 8px; }
 .map-well { cursor: pointer; }
 .map-well:hover circle { filter: brightness(1.15); }
 .map-label { fill: var(--text-2); font: 12px var(--mono); pointer-events: none; }

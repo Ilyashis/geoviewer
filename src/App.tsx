@@ -245,7 +245,7 @@ export default function App() {
         {tab === 'dashboard' ? (
           <Dashboard projectName={projectName} wells={wells} markers={markers} />
         ) : tab === 'map' ? (
-          <WellMap wells={wells} activeWellId={activeWellId} onActivate={setActiveWell} />
+          <WellMap wells={wells} markers={markers} activeWellId={activeWellId} onActivate={setActiveWell} />
         ) : tab === 'tie' ? (
           <WellTie
             wells={wells}
