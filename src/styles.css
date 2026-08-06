@@ -486,6 +486,19 @@ body {
 }
 .vol-head { font-weight: 650; font-size: 13px; margin-bottom: 10px; }
 .vol-params { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 12px; }
+.vol-params.cols3 { grid-template-columns: repeat(3, 1fr); }
+.vol-src { display: flex; gap: 4px; margin-bottom: 10px; }
+.vol-src-btn {
+  flex: 1; padding: 5px 0; font-size: 11px; border-radius: var(--r-sm);
+  background: var(--canvas); border: 1px solid var(--border); color: var(--text-2); cursor: pointer;
+}
+.vol-src-btn:hover { color: var(--text); border-color: var(--accent); }
+.vol-src-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.vol-derived {
+  margin-bottom: 10px; padding: 8px 10px; border-radius: var(--r-sm);
+  background: rgba(58, 163, 201, 0.08); border: 1px solid var(--hairline);
+}
+.vol-derived .vol-row { padding: 3px 0; }
 .vol-in { display: flex; flex-direction: column; gap: 3px; }
 .vol-in span { font-size: 10px; font-family: var(--mono); color: var(--text-3); text-align: center; }
 .vol-in input {

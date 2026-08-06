@@ -4,6 +4,7 @@ import type { Marker, Well } from '../types';
 import { idwGrid, contourLevels } from '../geo/grid';
 import { marchingSquares } from '../geo/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams } from '../geo/volumetrics';
+import { aggregateZone, DEFAULT_PETRO, type PetroParams } from '../geo/petrophysics';
 
 interface Props {
   wells: Well[];
@@ -46,6 +47,8 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const [topId, setTopId] = useState<string | null>(null);
   const [baseId, setBaseId] = useState<string | null>(null);
   const [vol, setVol] = useState<VolParams>(DEFAULT_VOL_PARAMS);
+  const [useLogs, setUseLogs] = useState(false);
+  const [petro, setPetro] = useState<PetroParams>(DEFAULT_PETRO);
 
   const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
   const schematic = wells.length > 0 && coordWells.length < wells.length;
@@ -166,9 +169,20 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     }
   }, [grid, field, layout, size]);
 
+  // Log-derived net-pay stats for the isochore zone [top, base] across the mapped wells.
+  const logStats = useMemo(() => {
+    if (mode !== 'isochore' || !top || !base || top.id === base.id) return null;
+    return aggregateZone(coordWells, (w) => top.depths[w.id], (w) => base.depths[w.id], petro);
+  }, [mode, top, base, coordWells, petro]);
+
+  const effVol = useMemo<VolParams>(
+    () => (useLogs && logStats ? { ...vol, ng: logStats.ng, phi: logStats.phi, sw: logStats.sw } : vol),
+    [useLogs, logStats, vol],
+  );
+
   const volResult = useMemo(
-    () => (mode === 'isochore' && grid ? volumetrics(grid, vol) : null),
-    [mode, grid, vol],
+    () => (mode === 'isochore' && grid ? volumetrics(grid, effVol) : null),
+    [mode, grid, effVol],
   );
 
   if (wells.length === 0) {
@@ -268,13 +282,41 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       {volResult && field && (
         <aside className="vol-panel">
           <div className="vol-head">Подсчёт запасов · {field.title.split(' ·')[0]}</div>
-          <div className="vol-params">
-            <VolInput label="N/G" value={vol.ng} step={0.05} onChange={(v) => setVol({ ...vol, ng: v })} />
-            <VolInput label="φ" value={vol.phi} step={0.05} onChange={(v) => setVol({ ...vol, phi: v })} />
-            <VolInput label="Sw" value={vol.sw} step={0.05} onChange={(v) => setVol({ ...vol, sw: v })} />
-            <VolInput label="Bo" value={vol.bo} step={0.05} onChange={(v) => setVol({ ...vol, bo: v })} />
-            <VolInput label="ККИН" value={vol.rf} step={0.05} onChange={(v) => setVol({ ...vol, rf: v })} />
+          <div className="vol-src">
+            <button className={`vol-src-btn ${!useLogs ? 'on' : ''}`} onClick={() => setUseLogs(false)}>Ручные</button>
+            <button className={`vol-src-btn ${useLogs ? 'on' : ''}`} onClick={() => setUseLogs(true)}>Из логов</button>
           </div>
+          {useLogs && logStats ? (
+            <>
+              <div className="vol-derived">
+                <VolRow k="N/G · нетто/брутто" v={logStats.ng.toFixed(2)} strong />
+                <VolRow k="φ · пористость (нетто)" v={logStats.phi.toFixed(3)} />
+                <VolRow k="Sw · водонасыщ. (нетто)" v={logStats.sw.toFixed(2)} />
+                <VolRow k="Скважин в зоне" v={String(logStats.wellsUsed)} />
+              </div>
+              <div className="vol-params cols3">
+                <VolInput label="Vsh отс." value={petro.vshCut} step={0.05} onChange={(v) => setPetro({ ...petro, vshCut: v })} />
+                <VolInput label="φ отс." value={petro.phiCut} step={0.01} onChange={(v) => setPetro({ ...petro, phiCut: v })} />
+                <VolInput label="Sw отс." value={petro.swCut} step={0.05} onChange={(v) => setPetro({ ...petro, swCut: v })} />
+                <VolInput label="Rw" value={petro.rw} step={0.01} onChange={(v) => setPetro({ ...petro, rw: v })} />
+                <VolInput label="Bo" value={vol.bo} step={0.05} onChange={(v) => setVol({ ...vol, bo: v })} />
+                <VolInput label="ККИН" value={vol.rf} step={0.05} onChange={(v) => setVol({ ...vol, rf: v })} />
+              </div>
+            </>
+          ) : (
+            <>
+              {useLogs && (
+                <div className="vol-note">Нет кривых GR/RHOB/RES в интервале — используются ручные параметры.</div>
+              )}
+              <div className="vol-params">
+                <VolInput label="N/G" value={vol.ng} step={0.05} onChange={(v) => setVol({ ...vol, ng: v })} />
+                <VolInput label="φ" value={vol.phi} step={0.05} onChange={(v) => setVol({ ...vol, phi: v })} />
+                <VolInput label="Sw" value={vol.sw} step={0.05} onChange={(v) => setVol({ ...vol, sw: v })} />
+                <VolInput label="Bo" value={vol.bo} step={0.05} onChange={(v) => setVol({ ...vol, bo: v })} />
+                <VolInput label="ККИН" value={vol.rf} step={0.05} onChange={(v) => setVol({ ...vol, rf: v })} />
+              </div>
+            </>
+          )}
           <div className="vol-results">
             <VolRow k="Площадь" v={`${volResult.areaKm2.toFixed(2)} км²`} />
             <VolRow k="Ср. толщина" v={`${volResult.meanThickness.toFixed(1)} м`} />
