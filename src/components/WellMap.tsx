@@ -3,6 +3,7 @@ import { Navigation } from 'lucide-react';
 import type { Marker, Well } from '../types';
 import { contourLevels } from '../geo/grid';
 import { buildSurface, type ControlPoint } from '../core/framework';
+import { tvdss } from '../core/crs';
 import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../geo/deviation';
 import { marchingSquares } from '../geo/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../geo/volumetrics';
@@ -90,7 +91,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     return m;
   }, [coordWells]);
   const anyDeviated = trajs.size > 0;
-  const tvdssAt = (w: Well, md: number) => tvdAtMd(trajs.get(w.id) ?? [], md) - (w.kb ?? 0);
+  const tvdssAt = (w: Well, md: number) => tvdss(tvdAtMd(trajs.get(w.id) ?? [], md), w.kb);
   const posAt = (w: Well, md: number) => {
     const p = positionAtMd(trajs.get(w.id) ?? [], md);
     return { x: w.x! + p.east, y: w.y! + p.north };

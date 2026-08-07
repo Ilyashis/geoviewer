@@ -10,6 +10,7 @@
 
 import type { Curve, Well } from '../types';
 import { uid } from '../util/id';
+import { lengthUnitOf, toMetres } from '../core/crs';
 
 export interface LasHeaderItem {
   mnemonic: string;
@@ -148,12 +149,11 @@ export function parseLasToWell(text: string, fileName = 'well.las'): Well {
   const isNull = (v: number) => !Number.isFinite(v) || v === parsed.nullValue;
 
   // First curve is the depth index by LAS convention. Real files come in feet;
-  // normalise depth to metres so maps/volumetrics stay consistent across wells.
+  // normalise depth to metres (core/crs) so maps/volumetrics stay consistent.
   const depthInfo = parsed.curveInfo[0];
-  const isFeet = /^(ft|feet|f|')$/i.test((depthInfo.unit || '').trim());
-  const factor = isFeet ? 0.3048 : 1;
+  const unit = lengthUnitOf(depthInfo.unit);
   const depthRaw = parsed.data[0] ?? [];
-  const depth = depthRaw.map((v) => (isNull(v) ? NaN : v * factor));
+  const depth = depthRaw.map((v) => (isNull(v) ? NaN : toMetres(v, unit)));
   if (depth.length === 0) throw new Error('В секции ~ASCII нет строк данных.');
 
   const curves: Curve[] = [];
@@ -196,7 +196,7 @@ export function parseLasToWell(text: string, fileName = 'well.las'): Well {
     x,
     y,
     depth,
-    depthUnit: isFeet ? 'M' : (depthInfo.unit || 'M'),
+    depthUnit: 'M', // normalised to metres on import (core/crs)
     curves,
     lithology: [],
     header,
