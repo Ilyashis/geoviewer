@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { createWellsSlice } from './slices/wells';
 import { createMarkersSlice } from './slices/markers';
 import { createProjectSlice } from './slices/project';
+import { createFrameworkSlice } from './slices/framework';
 import type { Store } from './types';
 
 export type { Store } from './types';
@@ -14,4 +15,5 @@ export const useStore = create<Store>()((...a) => ({
   ...createWellsSlice(...a),
   ...createMarkersSlice(...a),
   ...createProjectSlice(...a),
+  ...createFrameworkSlice(...a),
 }));

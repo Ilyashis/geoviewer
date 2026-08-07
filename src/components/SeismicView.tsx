@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Marker, Well } from '../types';
 import { buildFieldSection, autoTrackHorizon, horizonControls, twtToDepth } from '../seismic';
 import { buildSurface } from '../core/framework';
+import { useStore } from '../store';
 
 interface Props {
   wells: Well[];
@@ -23,6 +24,9 @@ export function SeismicView({ wells, markers }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [picked, setPicked] = useState<{ label: string; color: string; twt: Float64Array } | null>(null);
+  const seismicHorizons = useStore((s) => s.seismicHorizons);
+  const setSeismicHorizon = useStore((s) => s.setSeismicHorizon);
+  const clearSeismicHorizon = useStore((s) => s.clearSeismicHorizon);
 
   const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
   const field = useMemo(() => buildFieldSection(coordWells, markers, VELOCITY), [coordWells, markers]);
@@ -59,6 +63,7 @@ export function SeismicView({ wells, markers }: Props) {
       maxMiss = Math.max(maxMiss, Math.abs(seisDepth - twtToDepth(top.twt, field.velocity)));
     }
     return {
+      controls,
       n: controls.length,
       twtMin: Math.min(...picked.twt), twtMax: Math.max(...picked.twt),
       zMin: Math.min(...zs), zMax: Math.max(...zs),
@@ -213,6 +218,10 @@ export function SeismicView({ wells, markers }: Props) {
           <div className="seismic-row"><span>→ buildSurface</span><b>{pick.nx}×{pick.ny}</b></div>
           <div className="seismic-row strong"><span>Согласие со скв.</span><b>±{pick.maxMiss.toFixed(1)} м</b></div>
           <div className="seismic-note">Горизонт → контрольные точки → каркас (тот же <code>buildSurface</code>, что и для скважин).</div>
+          <button className={`seismic-apply ${seismicHorizons[picked.label] ? 'on' : ''}`}
+            onClick={() => (seismicHorizons[picked.label] ? clearSeismicHorizon(picked.label) : setSeismicHorizon(picked.label, pick.controls))}>
+            {seismicHorizons[picked.label] ? '✓ в карте — убрать' : 'Использовать в карте'}
+          </button>
         </aside>
       )}
 

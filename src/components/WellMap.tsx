@@ -4,6 +4,7 @@ import type { Marker, Well } from '../types';
 import { contourLevels } from '../core/geom/grid';
 import { buildSurface, type ControlPoint } from '../core/framework';
 import { tvdss } from '../core/crs';
+import { useStore } from '../store';
 import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../wells/deviation';
 import { marchingSquares } from '../core/geom/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../reserves/volumetrics';
@@ -97,9 +98,17 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     return { x: w.x! + p.east, y: w.y! + p.north };
   };
 
+  const seismicHorizons = useStore((s) => s.seismicHorizons);
+  // Seismic-derived horizon control points for the selected structure surface.
+  const seismicControls = useMemo(
+    () => (mode === 'structure' && surface ? seismicHorizons[surface.label] : undefined),
+    [mode, surface, seismicHorizons],
+  );
+
   const field = useMemo<Field | null>(() => {
     // valueMd → the mapped value plus the MD used to place the (deviated) point.
-    const build = (valueMd: (w: Well) => { value: number; posMd: number } | null, title: string): Field | null => {
+    // `extra` control points (e.g. a seismic horizon) join the well picks.
+    const build = (valueMd: (w: Well) => { value: number; posMd: number } | null, title: string, extra?: ControlPoint[]): Field | null => {
       const points: Field['points'] = [];
       const byWell: Record<string, number> = {};
       for (const w of coordWells) {
@@ -109,6 +118,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
         points.push({ x: pos.x, y: pos.y, z: r.value });
         byWell[w.id] = r.value;
       }
+      if (extra) for (const c of extra) points.push({ x: c.x, y: c.y, z: c.z });
       if (points.length < 3) return null;
       const zs = points.map((p) => p.z);
       return { points, byWell, vmin: Math.min(...zs), vmax: Math.max(...zs), title };
@@ -119,7 +129,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       return build((w) => {
         const md = surface.depths[w.id];
         return Number.isFinite(md) ? { value: tvdssAt(w, md), posMd: md } : null;
-      }, `${surface.label} · TVDSS, м`);
+      }, `${surface.label} · TVDSS, м`, seismicControls);
     }
     if (!top || !base || top.id === base.id) return null;
     return build((w) => {
@@ -127,7 +137,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       if (!Number.isFinite(t) || !Number.isFinite(b)) return null;
       return { value: tvdssAt(w, b) - tvdssAt(w, t), posMd: t }; // true vertical thickness
     }, `${top.label}–${base.label} · толщина TVT, м`);
-  }, [mode, surface, top, base, coordWells, trajs]);
+  }, [mode, surface, top, base, coordWells, trajs, seismicControls]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -344,6 +354,11 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       })
     : [];
 
+  // The seismic horizon transect that feeds the current structure surface.
+  const seismicPath = layout && seismicControls && seismicControls.length
+    ? seismicControls.map((c, i) => { const p = layout.toPx(c.x, c.y); return `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`; }).join(' ')
+    : '';
+
   const SurfBtns = ({ selId, onSel }: { selId: string | undefined; onSel: (id: string) => void }) => (
     <>
       {mappable.map((m) => (
@@ -368,6 +383,10 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             <circle cx={d.ex} cy={d.ey} r={3} />
           </g>
         ))}
+        {seismicPath && (
+          <path d={seismicPath} fill="none" stroke="var(--accent-2)" strokeWidth={2.5}
+            strokeOpacity={0.92} strokeLinecap="round" strokeLinejoin="round" />
+        )}
         {pts.map((p) => {
           const active = p.id === activeWellId;
           const flip = p.px > size.w - (p.name.length * 8 + 34);
@@ -426,6 +445,9 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             <div className="map-leg-row"><span className="map-leg-line" /> профиль · изолинии</div>
             {contact && <div className="map-leg-row"><span className="map-leg-owc" /> ВНК {Math.round(owc)} м</div>}
             {anyDeviated && <div className="map-leg-row"><span className="map-leg-dev" /> накл. ствол → снос/TVDSS</div>}
+            {seismicControls && seismicControls.length > 0 && (
+              <div className="map-leg-row"><span className="map-leg-seis" /> сейсмо-горизонт ({seismicControls.length} тчк)</div>
+            )}
           </>
         ) : (
           <div className="map-leg-row"><span className="map-leg-line" /> профиль корреляции</div>
