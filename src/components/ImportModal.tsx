@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
-import { X, Upload, Milestone, Layers } from 'lucide-react';
+import { X, Upload, Milestone, Layers, Spline } from 'lucide-react';
 import { useStore } from '../store';
 import { parseTopsCsv } from '../tops/csv';
 import { parseLithologyCsv } from '../lithology/csv';
+import { parseSurveyCsv } from '../survey/csv';
 
-type Kind = 'tops' | 'litho';
+type Kind = 'tops' | 'litho' | 'survey';
 
 interface Props {
   onClose: () => void;
@@ -19,12 +20,18 @@ UT-1059,Top A,2055`,
 UT-1058,2000,2012,Sandstone,Oil
 UT-1058,2012,2020,Shale,
 UT-1058,2020,2035,Limestone,Water`,
+  survey: `Well,MD,Inc,Azi
+UT-1059,0,0,97
+UT-1059,1600,0,97
+UT-1059,2200,34,97
+UT-1059,3200,34,97`,
 };
 
 export function ImportModal({ onClose }: Props) {
   const wells = useStore((s) => s.wells);
   const importTops = useStore((s) => s.importTops);
   const importLithology = useStore((s) => s.importLithology);
+  const importSurveys = useStore((s) => s.importSurveys);
   const [kind, setKind] = useState<Kind>('tops');
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -43,11 +50,17 @@ export function ImportModal({ onClose }: Props) {
         const r = importTops(rows);
         setSummary(`Импортировано: ${r.surfaces} пластов, ${r.picks} пикировок.`);
         if (r.unmatchedWells.length) setWarn(`Не найдены скважины: ${r.unmatchedWells.join(', ')}`);
-      } else {
+      } else if (kind === 'litho') {
         const { rows } = parseLithologyCsv(text);
         if (rows.length === 0) { setError('Нет валидных строк с интервалами.'); return; }
         const r = importLithology(rows);
         setSummary(`Импортировано: ${r.intervals} интервалов в ${r.wells} скважин.`);
+        if (r.unmatchedWells.length) setWarn(`Не найдены скважины: ${r.unmatchedWells.join(', ')}`);
+      } else {
+        const { rows } = parseSurveyCsv(text);
+        if (rows.length === 0) { setError('Нет валидных строк со станциями.'); return; }
+        const r = importSurveys(rows);
+        setSummary(`Импортировано: ${r.stations} станций в ${r.wells} скважин.`);
         if (r.unmatchedWells.length) setWarn(`Не найдены скважины: ${r.unmatchedWells.join(', ')}`);
       }
     } catch (e) {
@@ -70,6 +83,9 @@ export function ImportModal({ onClose }: Props) {
           <button className={`seg-btn ${kind === 'litho' ? 'on' : ''}`} onClick={() => { setKind('litho'); reset(); }}>
             <Layers size={14} strokeWidth={1.75} /> Литология
           </button>
+          <button className={`seg-btn ${kind === 'survey' ? 'on' : ''}`} onClick={() => { setKind('survey'); reset(); }}>
+            <Spline size={14} strokeWidth={1.75} /> Инклинометрия
+          </button>
         </div>
 
         {wells.length === 0 ? (
@@ -78,10 +94,15 @@ export function ImportModal({ onClose }: Props) {
           <p className="modal-hint">
             Колонки <b>скважина</b>, <b>пласт</b>, <b>глубина</b>. Одноимённые пласты сливаются в один маркер.
           </p>
-        ) : (
+        ) : kind === 'litho' ? (
           <p className="modal-hint">
             Колонки <b>скважина</b>, <b>кровля</b>, <b>подошва</b>, <b>литотип</b>, опц. <b>насыщение</b>.
             Литология скважины заменяется целиком.
+          </p>
+        ) : (
+          <p className="modal-hint">
+            Колонки <b>скважина</b>, <b>MD</b>, <b>наклон</b> (зенит), <b>азимут</b> — град. Одна строка = станция;
+            траектория и TVD считаются по минимальной кривизне.
           </p>
         )}
 

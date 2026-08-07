@@ -5,6 +5,7 @@ import { generateDemoLithology } from './plate/demoLithology';
 import { uid } from './util/id';
 import type { TopRow } from './tops/csv';
 import type { LithoRow } from './lithology/csv';
+import type { SurveyRow } from './survey/csv';
 import { mapLithology, mapSaturation } from './lithology/map';
 import type { ProjectMeta } from './persistence';
 import type { SurveyStation } from './geo/deviation';
@@ -30,6 +31,12 @@ export interface ImportSummary {
 export interface LithoImportSummary {
   wells: number;
   intervals: number;
+  unmatchedWells: string[];
+}
+
+export interface SurveyImportSummary {
+  wells: number;
+  stations: number;
   unmatchedWells: string[];
 }
 
@@ -68,6 +75,7 @@ interface AppState {
   clearAll: () => void;
   importTops: (rows: TopRow[]) => ImportSummary;
   importLithology: (rows: LithoRow[]) => LithoImportSummary;
+  importSurveys: (rows: SurveyRow[]) => SurveyImportSummary;
   setProjects: (list: ProjectMeta[]) => void;
   setCurrentProject: (id: string, name: string) => void;
 }
@@ -302,6 +310,36 @@ export const useStore = create<AppState>((set, get) => ({
 
     set({ wells });
     return { wells: perWell.size, intervals, unmatchedWells: [...unmatched] };
+  },
+
+  importSurveys: (rows) => {
+    const state = get();
+    const norm = (s: string) => s.trim().toLowerCase();
+    const byName = new Map<string, string>();
+    for (const w of state.wells) {
+      byName.set(norm(w.name), w.id);
+      if (w.uwi) byName.set(norm(w.uwi), w.id);
+    }
+
+    const perWell = new Map<string, SurveyStation[]>();
+    const unmatched = new Set<string>();
+    let stations = 0;
+    for (const r of rows) {
+      const wellId = byName.get(norm(r.well));
+      if (!wellId) { unmatched.add(r.well); continue; }
+      if (!perWell.has(wellId)) perWell.set(wellId, []);
+      perWell.get(wellId)!.push({ md: r.md, inc: r.inc, azi: r.azi });
+      stations++;
+    }
+
+    // Replace the survey for wells present in the import (sorted by MD).
+    const wells = state.wells.map((w) => {
+      const s = perWell.get(w.id);
+      return s ? { ...w, survey: [...s].sort((a, b) => a.md - b.md) } : w;
+    });
+
+    set({ wells });
+    return { wells: perWell.size, stations, unmatchedWells: [...unmatched] };
   },
 
   setProjects: (list) => set({ projects: list }),
