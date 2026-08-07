@@ -67,10 +67,10 @@ export function parseLas(text: string): ParsedLas {
   const version: Record<string, LasHeaderItem> = {};
   const well: Record<string, LasHeaderItem> = {};
   const curveInfo: LasHeaderItem[] = [];
-  const dataTokens: string[] = [];
+  const dataLines: string[] = [];
 
   let current = '';
-  const lines = text.split(/\r\n|\r|\n/);
+  const lines = text.replace(/^﻿/, '').split(/\r\n|\r|\n/); // strip BOM
 
   for (const raw of lines) {
     const line = raw.trim();
@@ -98,9 +98,7 @@ export function parseLas(text: string): ParsedLas {
         break;
       }
       case 'A': {
-        for (const tok of line.split(/\s+/)) {
-          if (tok) dataTokens.push(tok);
-        }
+        dataLines.push(line); // tokenised below (mode depends on WRAP)
         break;
       }
       // 'P' (parameters) and 'O' (other) are ignored for the MVP.
@@ -114,14 +112,24 @@ export function parseLas(text: string): ParsedLas {
 
   const nCols = curveInfo.length;
   const data: number[][] = Array.from({ length: nCols }, () => []);
+  const split = (l: string) => l.split(/[\s,]+/).filter((t) => t); // space/tab/comma delimited
 
   if (nCols > 0) {
-    // Flatten-then-chunk handles WRAP=YES and WRAP=NO uniformly: regardless of
-    // how values are split across physical lines, every logical depth row has
-    // exactly nCols tokens.
-    for (let i = 0; i + nCols <= dataTokens.length; i += nCols) {
-      for (let c = 0; c < nCols; c++) {
-        data[c].push(Number(dataTokens[i + c]));
+    if (wrap) {
+      // WRAP=YES: a row spans several physical lines — flatten, then chunk by nCols.
+      const toks: string[] = [];
+      for (const l of dataLines) for (const t of split(l)) toks.push(t);
+      for (let i = 0; i + nCols <= toks.length; i += nCols) {
+        for (let c = 0; c < nCols; c++) data[c].push(Number(toks[i + c]));
+      }
+    } else {
+      // WRAP=NO: one physical line = one depth row. Row-based parsing keeps a
+      // short/garbled line from shifting every value after it; missing trailing
+      // columns become NULL (NaN).
+      for (const l of dataLines) {
+        const toks = split(l);
+        if (toks.length === 0) continue;
+        for (let c = 0; c < nCols; c++) data[c].push(c < toks.length ? Number(toks[c]) : NaN);
       }
     }
   }
@@ -139,10 +147,14 @@ export function parseLasToWell(text: string, fileName = 'well.las'): Well {
 
   const isNull = (v: number) => !Number.isFinite(v) || v === parsed.nullValue;
 
-  // First curve is the depth index by LAS convention.
-  const depthRaw = parsed.data[0] ?? [];
-  const depth = depthRaw.map((v) => (isNull(v) ? NaN : v));
+  // First curve is the depth index by LAS convention. Real files come in feet;
+  // normalise depth to metres so maps/volumetrics stay consistent across wells.
   const depthInfo = parsed.curveInfo[0];
+  const isFeet = /^(ft|feet|f|')$/i.test((depthInfo.unit || '').trim());
+  const factor = isFeet ? 0.3048 : 1;
+  const depthRaw = parsed.data[0] ?? [];
+  const depth = depthRaw.map((v) => (isNull(v) ? NaN : v * factor));
+  if (depth.length === 0) throw new Error('В секции ~ASCII нет строк данных.');
 
   const curves: Curve[] = [];
   for (let c = 1; c < parsed.curveInfo.length; c++) {
@@ -184,7 +196,7 @@ export function parseLasToWell(text: string, fileName = 'well.las'): Well {
     x,
     y,
     depth,
-    depthUnit: depthInfo.unit || 'M',
+    depthUnit: isFeet ? 'M' : (depthInfo.unit || 'M'),
     curves,
     lithology: [],
     header,

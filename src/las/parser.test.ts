@@ -105,3 +105,48 @@ describe('WRAP=YES handling', () => {
     expect(gr.values).toEqual([75.25, 82.1]);
   });
 });
+
+describe('real-world robustness', () => {
+  const base = (data: string, depthUnit = 'M') => `~V
+ VERS. 2.0 :
+ WRAP. NO :
+~W
+ NULL. -999.25 :
+ WELL. RW :
+~C
+ DEPT.${depthUnit} :
+ GR.GAPI :
+ RESD.OHMM :
+~A
+${data}`;
+
+  it('converts a feet depth index to metres', () => {
+    const well = parseLasToWell(base('1000 75 12\n1000.5 80 13', 'FT'));
+    expect(well.depthUnit).toBe('M');
+    expect(well.depth[0]).toBeCloseTo(304.8, 4);
+    expect(well.depth[1]).toBeCloseTo(304.9524, 4);
+  });
+
+  it('keeps rows aligned when a data line is short (WRAP=NO)', () => {
+    const well = parseLasToWell(base('1670 75 12\n1669 82\n1668 68 15'));
+    expect(well.depth).toEqual([1670, 1669, 1668]);
+    const resd = well.curves.find((c) => c.mnemonic === 'RESD')!;
+    expect(resd.values).toEqual([12, null, 15]); // missing value → null, later rows unshifted
+  });
+
+  it('accepts comma-delimited data', () => {
+    const well = parseLasToWell(base('1670.0,75.25,12.5\n1669.0,82.1,14.1'));
+    expect(well.depth).toEqual([1670.0, 1669.0]);
+    expect(well.curves.find((c) => c.mnemonic === 'GR')!.values).toEqual([75.25, 82.1]);
+  });
+
+  it('tolerates a leading BOM', () => {
+    const p = parseLas('﻿' + base('1670 75 12'));
+    expect(p.curveInfo.map((c) => c.mnemonic)).toEqual(['DEPT', 'GR', 'RESD']);
+    expect(p.well['WELL'].value).toBe('RW');
+  });
+
+  it('throws when the ~ASCII section has no rows', () => {
+    expect(() => parseLasToWell(base(''))).toThrow(/нет строк данных/);
+  });
+});
