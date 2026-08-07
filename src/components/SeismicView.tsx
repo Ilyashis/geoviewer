@@ -6,7 +6,8 @@ import {
 } from '../seismic';
 import { buildSurface } from '../core/framework';
 import {
-  twtToDepth, velocityAt, DEFAULT_VELOCITY, COMPACTION, type VelocityModel,
+  twtToDepth, velocityAt, calibrateVelocity, DEFAULT_VELOCITY, COMPACTION,
+  type VelocityModel, type VelocitySample,
 } from '../core/velocity';
 import { useStore } from '../store';
 
@@ -15,11 +16,10 @@ interface Props {
   markers: Marker[];
 }
 
+type ConvKey = 'const' | 'linear' | 'cal';
 const NODE_COUNT = 14; // editable nodes along the horizon
-const VEL_MODELS: { key: string; label: string; model: VelocityModel }[] = [
-  { key: 'const', label: 'Постоянная', model: DEFAULT_VELOCITY },
-  { key: 'linear', label: 'Компакция V₀+k·z', model: COMPACTION },
-];
+// Depth-conversion presets; 'cal' is fitted from the well ties on demand.
+const CONV_PRESETS: Record<'const' | 'linear', VelocityModel> = { const: DEFAULT_VELOCITY, linear: COMPACTION };
 const niceStep = (raw: number) => { const p = Math.pow(10, Math.floor(Math.log10(raw))); const n = raw / p; return (n >= 5 ? 5 : n >= 2 ? 2 : 1) * p; };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -36,14 +36,21 @@ export function SeismicView({ wells, markers }: Props) {
   const dragRef = useRef<number | null>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [edit, setEdit] = useState<{ label: string; color: string; nodes: HorizonNode[] } | null>(null);
-  const [velKey, setVelKey] = useState('const');
+  const [convKey, setConvKey] = useState<ConvKey>('const');
+  const [calModel, setCalModel] = useState<VelocityModel | null>(null);
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   const setSeismicHorizon = useStore((s) => s.setSeismicHorizon);
   const clearSeismicHorizon = useStore((s) => s.clearSeismicHorizon);
 
-  const velModel = useMemo(() => VEL_MODELS.find((v) => v.key === velKey)!.model, [velKey]);
+  // The conversion velocity applied to picked times (independent of the earth truth
+  // the section was built with). Switching it re-converts live — it does NOT rebuild
+  // the section, so the picked horizon survives.
+  const conv = useMemo<VelocityModel>(
+    () => (convKey === 'cal' && calModel ? calModel : CONV_PRESETS[convKey === 'cal' ? 'const' : convKey]),
+    [convKey, calModel],
+  );
   const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
-  const field = useMemo(() => buildFieldSection(coordWells, markers, velModel), [coordWells, markers, velModel]);
+  const field = useMemo(() => buildFieldSection(coordWells, markers), [coordWells, markers]);
 
   const horizonList = useMemo(() => {
     if (!field) return [];
@@ -82,15 +89,17 @@ export function SeismicView({ wells, markers }: Props) {
   // how well the seismic depth agrees with the well picks.
   const pick = useMemo(() => {
     if (!field || !horizonTwt || !edit) return null;
-    const controls = horizonControls(field, horizonTwt);
+    const controls = horizonControls(field, horizonTwt, conv);
     const zs = controls.map((c) => c.z), xs = controls.map((c) => c.x), ys = controls.map((c) => c.y);
     const surface = buildSurface(controls, { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys), nx: 40, ny: 40 });
+    // Tie error: the converted picked depth vs the well's KNOWN depth — this is the
+    // model error the calibration minimises (not just tracking error).
     let maxMiss = 0;
     for (const w of field.wells) {
       const top = w.tops.find((t) => t.label === edit.label);
       if (!top) continue;
       const i = Math.round(w.xFrac * (field.section.nTraces - 1));
-      maxMiss = Math.max(maxMiss, Math.abs(twtToDepth(field.velocity, horizonTwt[i]) - twtToDepth(field.velocity, top.twt)));
+      maxMiss = Math.max(maxMiss, Math.abs(twtToDepth(conv, horizonTwt[i]) - top.depth));
     }
     return {
       controls, n: controls.length,
@@ -98,20 +107,37 @@ export function SeismicView({ wells, markers }: Props) {
       zMin: Math.min(...zs), zMax: Math.max(...zs),
       nx: surface?.grid.nx ?? 0, ny: surface?.grid.ny ?? 0, maxMiss,
     };
-  }, [field, horizonTwt, edit]);
+  }, [field, horizonTwt, edit, conv]);
 
-  // Velocity range across the section's time window, for the badge.
+  // Conversion-velocity range across the section's time window, for the badge.
   const velInfo = useMemo(() => {
     if (!field) return null;
     const { t0, nSamples, dt } = field.section;
-    const zTop = twtToDepth(field.velocity, t0);
-    const zBot = twtToDepth(field.velocity, t0 + nSamples * dt);
-    return { vTop: Math.round(velocityAt(field.velocity, zTop)), vBot: Math.round(velocityAt(field.velocity, zBot)) };
-  }, [field]);
+    const zTop = twtToDepth(conv, t0);
+    const zBot = twtToDepth(conv, t0 + nSamples * dt);
+    return { vTop: Math.round(velocityAt(conv, zTop)), vBot: Math.round(velocityAt(conv, zBot)) };
+  }, [field, conv]);
+
+  // How well the conversion velocity ties the wells' own time↔depth pairs — the
+  // pure velocity residual the calibration minimises (no picking involved).
+  const velTie = useMemo(() => {
+    if (!field) return null;
+    let max = 0;
+    for (const w of field.wells) for (const t of w.tops) max = Math.max(max, Math.abs(twtToDepth(conv, t.twt) - t.depth));
+    return max;
+  }, [field, conv]);
 
   const snap = (label: string, color: string, seedTwt: number) => {
     if (!field) return;
     setEdit({ label, color, nodes: sampleNodes(autoTrackHorizon(field.section, seedTwt), NODE_COUNT) });
+  };
+
+  // Fit v0/k so the wells' picked times convert to their known depths.
+  const calibrate = () => {
+    if (!field) return;
+    const samples: VelocitySample[] = field.wells.flatMap((w) => w.tops.map((t) => ({ depth: t.depth, twt: t.twt })));
+    setCalModel(calibrateVelocity(samples));
+    setConvKey('cal');
   };
 
   // --- Node drag editing ---
@@ -296,17 +322,21 @@ export function SeismicView({ wells, markers }: Props) {
       )}
 
       <div className="seismic-vel">
-        <span className="seismic-vel-l">Скорость</span>
-        {VEL_MODELS.map((v) => (
-          <button key={v.key} className={`seismic-vel-btn ${velKey === v.key ? 'on' : ''}`}
-            onClick={() => setVelKey(v.key)}>{v.label}</button>
-        ))}
+        <span className="seismic-vel-l">Глубина</span>
+        <button className={`seismic-vel-btn ${convKey === 'const' ? 'on' : ''}`} onClick={() => setConvKey('const')}>Постоянная</button>
+        <button className={`seismic-vel-btn ${convKey === 'linear' ? 'on' : ''}`} onClick={() => setConvKey('linear')}>Компакция</button>
+        <button className={`seismic-vel-btn cal ${convKey === 'cal' ? 'on' : ''}`} onClick={calibrate}>Калибровать по скв.</button>
+        {velTie != null && <span className={`seismic-vel-tie ${velTie < 8 ? 'ok' : ''}`} title="невязка v-модели по кровлям скважин">тай ±{Math.round(velTie)} м</span>}
       </div>
 
       <div className="seismic-badge">
-        Синтетический разрез · {field.section.nTraces} трасс · {field.velocity.kind === 'const'
-          ? `v = ${field.velocity.v} м/с`
-          : `v = ${velInfo?.vTop}→${velInfo?.vBot} м/с (V₀+k·z)`}
+        Синтетический разрез · {field.section.nTraces} трасс · {conv.kind === 'const'
+          ? `v = ${conv.v} м/с`
+          : `v = ${velInfo?.vTop}→${velInfo?.vBot} м/с`}
+        {convKey === 'cal' && calModel && (
+          <span className="seismic-cal"> · калибр. {calModel.kind === 'linear'
+            ? `V₀=${calModel.v0}, k=${calModel.k}` : `V=${calModel.v}`}</span>
+        )}
       </div>
     </div>
   );

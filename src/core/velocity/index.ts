@@ -1,2 +1,2 @@
-export { velocityAt, depthToTwt, twtToDepth, avgVelocityTo, DEFAULT_VELOCITY, COMPACTION } from './model';
-export type { VelocityModel } from './model';
+export { velocityAt, depthToTwt, twtToDepth, avgVelocityTo, calibrateVelocity, DEFAULT_VELOCITY, COMPACTION } from './model';
+export type { VelocityModel, VelocitySample } from './model';

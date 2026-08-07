@@ -49,7 +49,7 @@ describe('horizonControls → buildSurface (seismic feeds the framework)', () =>
   it('converts a horizon to depth control points along the line', () => {
     const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
     const h = new Float64Array(field.section.nTraces).fill(1800);
-    const controls = horizonControls(field, h);
+    const controls = horizonControls(field, h, DEFAULT_VELOCITY);
     expect(controls).toHaveLength(field.section.nTraces);
     expect(controls[0].z).toBeCloseTo(twtToDepth(DEFAULT_VELOCITY, 1800), 3); // ≈ 1980 m
     expect(controls[0].x).toBeCloseTo(0, 6);
@@ -58,7 +58,7 @@ describe('horizonControls → buildSurface (seismic feeds the framework)', () =>
 
   it('the horizon control points build a surface via the shared service', () => {
     const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
-    const controls = horizonControls(field, autoTrackHorizon(field.section, 1850));
+    const controls = horizonControls(field, autoTrackHorizon(field.section, 1850), DEFAULT_VELOCITY);
     const xs = controls.map((c) => c.x), ys = controls.map((c) => c.y);
     const surface = buildSurface(controls, { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys), nx: 20, ny: 20 });
     expect(surface).not.toBeNull();

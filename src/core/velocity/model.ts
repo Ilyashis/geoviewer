@@ -49,3 +49,36 @@ export const DEFAULT_VELOCITY: VelocityModel = { kind: 'const', v: 2200 };
  * average to ~2 km lands near the old 2200 so tops don't jump when you switch.
  */
 export const COMPACTION: VelocityModel = { kind: 'linear', v0: 1800, k: 0.45 };
+
+/** A depth/time tie used to calibrate velocity — a marker's known depth and its picked TWT. */
+export interface VelocitySample { depth: number; twt: number }
+
+/**
+ * Fit a linear model V(z)=v0+k·z to depth/TWT ties by least squares — the
+ * seismic-to-well calibration: find the velocity that makes picked times convert
+ * to the wells' known depths. Robust bounded grid + local refine (no divergence,
+ * no derivatives); falls back to a constant when the gradient is negligible.
+ */
+export function calibrateVelocity(samples: VelocitySample[]): VelocityModel {
+  const pts = samples.filter((s) => s.depth > 0 && s.twt > 0);
+  if (pts.length < 2) return DEFAULT_VELOCITY;
+
+  const sse = (v0: number, k: number) => {
+    let s = 0;
+    for (const p of pts) { const r = depthToTwt({ kind: 'linear', v0, k }, p.depth) - p.twt; s += r * r; }
+    return s;
+  };
+  let best = { v0: 2000, k: 0, e: Infinity };
+  const scan = (v0lo: number, v0hi: number, v0st: number, klo: number, khi: number, kst: number) => {
+    for (let v0 = v0lo; v0 <= v0hi; v0 += v0st)
+      for (let k = klo; k <= khi; k += kst) {
+        const e = sse(v0, k);
+        if (e < best.e) best = { v0, k, e };
+      }
+  };
+  scan(1400, 3200, 25, 0, 1.0, 0.02);           // coarse
+  scan(best.v0 - 25, best.v0 + 25, 2, Math.max(0, best.k - 0.02), best.k + 0.02, 0.002); // refine
+
+  if (best.k < 0.01) return { kind: 'const', v: Math.round(best.v0) };
+  return { kind: 'linear', v0: Math.round(best.v0), k: Math.round(best.k * 1000) / 1000 };
+}

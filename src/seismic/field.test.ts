@@ -21,11 +21,12 @@ describe('buildFieldSection', () => {
     expect(f.wells[0].xFrac).toBeCloseTo(0, 6);   // leftmost
     expect(f.wells[2].xFrac).toBeCloseTo(1, 6);   // rightmost
     expect(f.wells[0].tops).toHaveLength(2);
-    // Top A at 2000 m, v=2200 → TWT = 2·2000/2200·1000 ≈ 1818 ms
+    // Top A at 2000 m, earth v=2200 → TWT = 2·2000/2200·1000 ≈ 1818 ms
     expect(f.wells[0].tops[0].twt).toBeCloseTo(1818.18, 1);
+    expect(f.wells[0].tops[0].depth).toBe(2000); // known depth carried for calibration
   });
 
-  it('a compaction model changes where tops post in time', () => {
+  it('a compaction earth changes where tops post in time', () => {
     const c = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
     const g = buildFieldSection(wells, markers, COMPACTION)!;
     // The presets are tuned so the average velocity to ~2 km (~2220 m/s) is a hair

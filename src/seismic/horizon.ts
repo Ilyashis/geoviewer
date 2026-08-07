@@ -1,7 +1,7 @@
 import type { SeismicSection } from './section';
 import type { FieldSection } from './field';
 import type { ControlPoint } from '../core/framework';
-import { twtToDepth } from '../core/velocity';
+import { twtToDepth, type VelocityModel } from '../core/velocity';
 
 /**
  * Auto-track a reflector from a seed TWT: at each trace follow the strongest
@@ -56,9 +56,12 @@ export function interpolateHorizon(nodes: HorizonNode[], nTraces: number): Float
   return out;
 }
 
-/** A tracked horizon (TWT per trace) → depth control points along the line (any source). */
-export function horizonControls(field: FieldSection, horizonTwt: Float64Array): ControlPoint[] {
-  const { line, section, velocity } = field;
+/**
+ * A tracked horizon (TWT per trace) → depth control points along the line, using
+ * the given conversion velocity (the calibrated/chosen model, not the earth truth).
+ */
+export function horizonControls(field: FieldSection, horizonTwt: Float64Array, conv: VelocityModel): ControlPoint[] {
+  const { line, section } = field;
   const n = section.nTraces;
   const out: ControlPoint[] = [];
   for (let i = 0; i < n; i++) {
@@ -66,7 +69,7 @@ export function horizonControls(field: FieldSection, horizonTwt: Float64Array): 
     out.push({
       x: line.p0.x + f * (line.p1.x - line.p0.x),
       y: line.p0.y + f * (line.p1.y - line.p0.y),
-      z: twtToDepth(velocity, horizonTwt[i]),
+      z: twtToDepth(conv, horizonTwt[i]),
     });
   }
   return out;

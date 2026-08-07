@@ -633,6 +633,12 @@ body {
 }
 .seismic-vel-btn:hover { color: var(--text); border-color: var(--accent); }
 .seismic-vel-btn.on { border-color: var(--accent); color: var(--text); background: var(--panel-2); }
+.seismic-vel-btn.cal { color: var(--accent-2); border-color: color-mix(in srgb, var(--accent-2) 45%, transparent); }
+.seismic-vel-btn.cal:hover { border-color: var(--accent-2); }
+.seismic-vel-btn.cal.on { background: color-mix(in srgb, var(--accent-2) 16%, transparent); border-color: var(--accent-2); color: var(--text); }
+.seismic-cal { color: var(--accent-2); }
+.seismic-vel-tie { margin-left: 2px; padding-left: 8px; border-left: 1px solid var(--border); font: 12px var(--mono); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.seismic-vel-tie.ok { color: var(--accent-2); }
 .seismic-panel {
   position: absolute; top: 16px; left: 18px; padding: 12px 14px; border-radius: var(--r-md);
   background: rgba(27, 33, 39, 0.9); backdrop-filter: blur(10px); border: 1px solid var(--border);

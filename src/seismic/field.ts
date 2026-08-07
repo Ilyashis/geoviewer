@@ -1,18 +1,27 @@
 import type { Marker, Well } from '../types';
 import { buildSyntheticSection, type Reflector, type SeismicSection } from './section';
-import { depthToTwt, DEFAULT_VELOCITY, type VelocityModel } from '../core/velocity';
+import { depthToTwt, type VelocityModel } from '../core/velocity';
+
+/**
+ * The demo's *true* subsurface velocity — a compaction gradient. The section and
+ * its tie markers are always synthesised from this, independent of whatever
+ * conversion velocity the user applies afterwards. That's what makes calibration
+ * honest: a naive constant misfits the wells, and fitting v0/k recovers this.
+ */
+export const EARTH: VelocityModel = { kind: 'linear', v0: 1900, k: 0.38 };
 
 export interface WellPost {
   id: string;
   name: string;
   /** Position along the line, 0 (left) … 1 (right). */
   xFrac: number;
-  tops: { label: string; color: string; twt: number }[];
+  tops: { label: string; color: string; twt: number; depth: number }[];
 }
 
 export interface FieldSection {
   section: SeismicSection;
-  velocity: VelocityModel;
+  /** The true velocity the section was synthesised with (not the conversion model). */
+  earth: VelocityModel;
   wells: WellPost[];
   /** Straight transect the traces run along, in map coordinates (trace frac 0→1 = p0→p1). */
   line: { p0: { x: number; y: number }; p1: { x: number; y: number } };
@@ -20,11 +29,11 @@ export interface FieldSection {
 
 /**
  * A synthetic seismic line along the wells: reflectors trend with the mapped
- * tops (depth→TWT), with filler reflectors for a realistic look, and wells are
- * posted with their tops as tie markers. This is the demo bridge — a later stage
- * picks the horizon and feeds it to buildSurface.
+ * tops (depth→TWT through the true earth), with filler reflectors for a realistic
+ * look, and wells are posted with their tops as tie markers. This is the demo
+ * bridge — a later stage picks the horizon and feeds it to buildSurface.
  */
-export function buildFieldSection(coordWells: Well[], markers: Marker[], velocity: VelocityModel = DEFAULT_VELOCITY): FieldSection | null {
+export function buildFieldSection(coordWells: Well[], markers: Marker[], earth: VelocityModel = EARTH): FieldSection | null {
   const wells = coordWells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y));
   if (wells.length < 2) return null;
 
@@ -41,7 +50,7 @@ export function buildFieldSection(coordWells: Well[], markers: Marker[], velocit
   for (const m of mappable) {
     const pts = wells
       .filter((w) => Number.isFinite(m.depths[w.id]))
-      .map((w) => ({ f: xFrac(w.x!), t: depthToTwt(velocity, m.depths[w.id]) }))
+      .map((w) => ({ f: xFrac(w.x!), t: depthToTwt(earth, m.depths[w.id]) }))
       .sort((a, b) => a.f - b.f);
     const first = pts[0], last = pts[pts.length - 1];
     const slope = last.f > first.f ? (last.t - first.t) / (last.f - first.f) : 0;
@@ -72,12 +81,12 @@ export function buildFieldSection(coordWells: Well[], markers: Marker[], velocit
     xFrac: xFrac(w.x!),
     tops: mappable
       .filter((m) => Number.isFinite(m.depths[w.id]))
-      .map((m) => ({ label: m.label, color: m.color, twt: depthToTwt(velocity, m.depths[w.id]) })),
+      .map((m) => ({ label: m.label, color: m.color, twt: depthToTwt(earth, m.depths[w.id]), depth: m.depths[w.id] })),
   }));
 
   const p0w = wells.reduce((a, b) => (a.x! <= b.x! ? a : b));
   const p1w = wells.reduce((a, b) => (a.x! >= b.x! ? a : b));
   const line = { p0: { x: p0w.x!, y: p0w.y! }, p1: { x: p1w.x!, y: p1w.y! } };
 
-  return { section, velocity, wells: posts, line };
+  return { section, earth, wells: posts, line };
 }
