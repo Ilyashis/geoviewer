@@ -1,0 +1,196 @@
+import type { StateCreator } from 'zustand';
+import type { LithoInterval, Well } from '../../types';
+import type { LithoRow } from '../../lithology/csv';
+import type { SurveyRow } from '../../survey/csv';
+import type { SurveyStation } from '../../geo/deviation';
+import { parseLasToWell } from '../../las/parser';
+import { generateDemoLithology } from '../../plate/demoLithology';
+import { mapLithology, mapSaturation } from '../../lithology/map';
+import { buildDemoLas } from '../../sampleData';
+import { uid } from '../../util/id';
+import { DEMO_TOPS, demoSurvey, norm, wellIndex } from '../shared';
+import type { Store } from '../types';
+
+export interface LithoImportSummary {
+  wells: number;
+  intervals: number;
+  unmatchedWells: string[];
+}
+
+export interface SurveyImportSummary {
+  wells: number;
+  stations: number;
+  unmatchedWells: string[];
+}
+
+export interface WellsSlice {
+  wells: Well[];
+  activeWellId: string | null;
+  error: string | null;
+  /** Per-well hidden track titles / LITHO_KEY (view setting). */
+  hiddenTracks: Record<string, string[]>;
+  addLasFiles: (files: FileList | File[]) => Promise<void>;
+  loadLasText: (text: string, fileName?: string) => void;
+  /** Replace the project with a ready demo field: several varied, partly-deviated wells + tops. */
+  loadDemoField: (count?: number) => void;
+  setActiveWell: (id: string) => void;
+  removeWell: (id: string) => void;
+  toggleTrack: (wellId: string, key: string) => void;
+  importLithology: (rows: LithoRow[]) => LithoImportSummary;
+  importSurveys: (rows: SurveyRow[]) => SurveyImportSummary;
+}
+
+export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, get) => ({
+  wells: [],
+  activeWellId: null,
+  error: null,
+  hiddenTracks: {},
+
+  addLasFiles: async (files) => {
+    for (const file of Array.from(files)) {
+      try {
+        const text = await file.text();
+        get().loadLasText(text, file.name);
+      } catch (e) {
+        set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` });
+      }
+    }
+  },
+
+  loadLasText: (text, fileName) => {
+    try {
+      const well = parseLasToWell(text, fileName);
+      const isDemo = /demo/i.test(fileName ?? '');
+      if (isDemo) {
+        // Distinct, concept-style names so wells are addressable (e.g. by tops import).
+        const i = get().wells.length;
+        well.name = `UT-${1058 + i}`;
+        well.lithology = generateDemoLithology(well, i + 1);
+        // Scatter demo wells over a plausible field so the map has real coordinates.
+        well.x = 12000 + (i % 3) * 850 + ((i * 137) % 300);
+        well.y = 48000 + Math.floor(i / 3) * 700 + ((i * 91) % 260);
+        // Make every other demo well deviated, so TVD/offset is exercised.
+        if (i % 2 === 1) well.survey = demoSurvey(i);
+      }
+
+      set((s) => {
+        const wells = [...s.wells, well];
+        let markers = s.markers;
+
+        if (isDemo && s.markers.length === 0) {
+          // Seed demo tops for the first demo well.
+          markers = DEMO_TOPS.map((t) => ({
+            id: `marker-${uid()}`,
+            label: t.label,
+            color: t.color,
+            depths: { [well.id]: t.base },
+          }));
+        } else if (markers.length) {
+          // Extend existing markers to the newly added well (stepped depth).
+          markers = markers.map((m, i) => {
+            const existing = Object.values(m.depths);
+            const base = existing.length ? Math.max(...existing) : 2050;
+            const step = isDemo ? (DEMO_TOPS[i]?.step ?? 6) : 6;
+            return { ...m, depths: { ...m.depths, [well.id]: base + step } };
+          });
+        }
+
+        return {
+          wells,
+          activeWellId: s.activeWellId ?? well.id,
+          markers,
+          error: null,
+        };
+      });
+    } catch (e) {
+      set({ error: `Ошибка разбора LAS: ${(e as Error).message}` });
+    }
+  },
+
+  loadDemoField: (count = 6) => {
+    get().clearAll();
+    for (let i = 0; i < count; i++) get().loadLasText(buildDemoLas(i), `andromeda-demo-${i}.las`);
+  },
+
+  setActiveWell: (id) => set({ activeWellId: id }),
+
+  removeWell: (id) =>
+    set((s) => {
+      const wells = s.wells.filter((w) => w.id !== id);
+      const markers = wells.length === 0
+        ? []
+        : s.markers.map((m) => {
+            const { [id]: _removed, ...rest } = m.depths;
+            return { ...m, depths: rest };
+          });
+      return {
+        wells,
+        markers,
+        activeWellId: s.activeWellId === id ? (wells[0]?.id ?? null) : s.activeWellId,
+      };
+    }),
+
+  toggleTrack: (wellId, key) =>
+    set((s) => {
+      const cur = s.hiddenTracks[wellId] ?? [];
+      const next = cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key];
+      return { hiddenTracks: { ...s.hiddenTracks, [wellId]: next } };
+    }),
+
+  importLithology: (rows) => {
+    const state = get();
+    const byName = wellIndex(state.wells);
+
+    // Group intervals per matched well.
+    const perWell = new Map<string, LithoInterval[]>();
+    const unmatched = new Set<string>();
+    let intervals = 0;
+    for (const r of rows) {
+      const wellId = byName.get(norm(r.well));
+      if (!wellId) { unmatched.add(r.well); continue; }
+      const { color, pattern } = mapLithology(r.litho);
+      const iv: LithoInterval = {
+        top: r.top, base: r.base, color, pattern,
+        sat: mapSaturation(r.sat), litho: r.litho, satName: r.sat,
+      };
+      if (!perWell.has(wellId)) perWell.set(wellId, []);
+      perWell.get(wellId)!.push(iv);
+      intervals++;
+    }
+
+    // Replace lithology for wells present in the import (sorted by depth).
+    const wells = state.wells.map((w) => {
+      const ivs = perWell.get(w.id);
+      if (!ivs) return w;
+      return { ...w, lithology: [...ivs].sort((a, b) => a.top - b.top) };
+    });
+
+    set({ wells });
+    return { wells: perWell.size, intervals, unmatchedWells: [...unmatched] };
+  },
+
+  importSurveys: (rows) => {
+    const state = get();
+    const byName = wellIndex(state.wells);
+
+    const perWell = new Map<string, SurveyStation[]>();
+    const unmatched = new Set<string>();
+    let stations = 0;
+    for (const r of rows) {
+      const wellId = byName.get(norm(r.well));
+      if (!wellId) { unmatched.add(r.well); continue; }
+      if (!perWell.has(wellId)) perWell.set(wellId, []);
+      perWell.get(wellId)!.push({ md: r.md, inc: r.inc, azi: r.azi });
+      stations++;
+    }
+
+    // Replace the survey for wells present in the import (sorted by MD).
+    const wells = state.wells.map((w) => {
+      const s = perWell.get(w.id);
+      return s ? { ...w, survey: [...s].sort((a, b) => a.md - b.md) } : w;
+    });
+
+    set({ wells });
+    return { wells: perWell.size, stations, unmatchedWells: [...unmatched] };
+  },
+});
