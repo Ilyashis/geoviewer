@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { Marker, Well } from '../types';
 import {
-  buildFieldSection, autoTrackHorizon, horizonControls, twtToDepth,
+  buildFieldSection, autoTrackHorizon, horizonControls,
   sampleNodes, interpolateHorizon, type HorizonNode,
 } from '../seismic';
 import { buildSurface } from '../core/framework';
+import {
+  twtToDepth, velocityAt, DEFAULT_VELOCITY, COMPACTION, type VelocityModel,
+} from '../core/velocity';
 import { useStore } from '../store';
 
 interface Props {
@@ -12,8 +15,11 @@ interface Props {
   markers: Marker[];
 }
 
-const VELOCITY = 2200; // m/s, constant depth↔TWT for the demo
 const NODE_COUNT = 14; // editable nodes along the horizon
+const VEL_MODELS: { key: string; label: string; model: VelocityModel }[] = [
+  { key: 'const', label: 'Постоянная', model: DEFAULT_VELOCITY },
+  { key: 'linear', label: 'Компакция V₀+k·z', model: COMPACTION },
+];
 const niceStep = (raw: number) => { const p = Math.pow(10, Math.floor(Math.log10(raw))); const n = raw / p; return (n >= 5 ? 5 : n >= 2 ? 2 : 1) * p; };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -30,12 +36,14 @@ export function SeismicView({ wells, markers }: Props) {
   const dragRef = useRef<number | null>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [edit, setEdit] = useState<{ label: string; color: string; nodes: HorizonNode[] } | null>(null);
+  const [velKey, setVelKey] = useState('const');
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   const setSeismicHorizon = useStore((s) => s.setSeismicHorizon);
   const clearSeismicHorizon = useStore((s) => s.clearSeismicHorizon);
 
+  const velModel = useMemo(() => VEL_MODELS.find((v) => v.key === velKey)!.model, [velKey]);
   const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
-  const field = useMemo(() => buildFieldSection(coordWells, markers, VELOCITY), [coordWells, markers]);
+  const field = useMemo(() => buildFieldSection(coordWells, markers, velModel), [coordWells, markers, velModel]);
 
   const horizonList = useMemo(() => {
     if (!field) return [];
@@ -82,7 +90,7 @@ export function SeismicView({ wells, markers }: Props) {
       const top = w.tops.find((t) => t.label === edit.label);
       if (!top) continue;
       const i = Math.round(w.xFrac * (field.section.nTraces - 1));
-      maxMiss = Math.max(maxMiss, Math.abs(twtToDepth(horizonTwt[i], field.velocity) - twtToDepth(top.twt, field.velocity)));
+      maxMiss = Math.max(maxMiss, Math.abs(twtToDepth(field.velocity, horizonTwt[i]) - twtToDepth(field.velocity, top.twt)));
     }
     return {
       controls, n: controls.length,
@@ -91,6 +99,15 @@ export function SeismicView({ wells, markers }: Props) {
       nx: surface?.grid.nx ?? 0, ny: surface?.grid.ny ?? 0, maxMiss,
     };
   }, [field, horizonTwt, edit]);
+
+  // Velocity range across the section's time window, for the badge.
+  const velInfo = useMemo(() => {
+    if (!field) return null;
+    const { t0, nSamples, dt } = field.section;
+    const zTop = twtToDepth(field.velocity, t0);
+    const zBot = twtToDepth(field.velocity, t0 + nSamples * dt);
+    return { vTop: Math.round(velocityAt(field.velocity, zTop)), vBot: Math.round(velocityAt(field.velocity, zBot)) };
+  }, [field]);
 
   const snap = (label: string, color: string, seedTwt: number) => {
     if (!field) return;
@@ -278,8 +295,18 @@ export function SeismicView({ wells, markers }: Props) {
         </aside>
       )}
 
+      <div className="seismic-vel">
+        <span className="seismic-vel-l">Скорость</span>
+        {VEL_MODELS.map((v) => (
+          <button key={v.key} className={`seismic-vel-btn ${velKey === v.key ? 'on' : ''}`}
+            onClick={() => setVelKey(v.key)}>{v.label}</button>
+        ))}
+      </div>
+
       <div className="seismic-badge">
-        Синтетический разрез · {field.section.nTraces} трасс · v = {field.velocity} м/с (демо)
+        Синтетический разрез · {field.section.nTraces} трасс · {field.velocity.kind === 'const'
+          ? `v = ${field.velocity.v} м/с`
+          : `v = ${velInfo?.vTop}→${velInfo?.vBot} м/с (V₀+k·z)`}
       </div>
     </div>
   );

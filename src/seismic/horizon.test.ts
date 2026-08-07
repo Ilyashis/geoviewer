@@ -1,15 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { buildSyntheticSection } from './section';
 import { buildFieldSection } from './field';
-import { autoTrackHorizon, horizonControls, twtToDepth, sampleNodes, interpolateHorizon } from './horizon';
+import { autoTrackHorizon, horizonControls, sampleNodes, interpolateHorizon } from './horizon';
 import { buildSurface } from '../core/framework';
+import { twtToDepth, DEFAULT_VELOCITY } from '../core/velocity';
 import type { Well, Marker } from '../types';
-
-describe('twtToDepth', () => {
-  it('inverts depth→TWT at the field velocity', () => {
-    expect(twtToDepth(1818.18, 2200)).toBeCloseTo(2000, 1);
-  });
-});
 
 describe('autoTrackHorizon', () => {
   it('follows a dipping reflector across the traces', () => {
@@ -52,17 +47,17 @@ describe('editable nodes', () => {
 
 describe('horizonControls → buildSurface (seismic feeds the framework)', () => {
   it('converts a horizon to depth control points along the line', () => {
-    const field = buildFieldSection(wells, markers, 2200)!;
+    const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
     const h = new Float64Array(field.section.nTraces).fill(1800);
     const controls = horizonControls(field, h);
     expect(controls).toHaveLength(field.section.nTraces);
-    expect(controls[0].z).toBeCloseTo(twtToDepth(1800, 2200), 3); // ≈ 1980 m
+    expect(controls[0].z).toBeCloseTo(twtToDepth(DEFAULT_VELOCITY, 1800), 3); // ≈ 1980 m
     expect(controls[0].x).toBeCloseTo(0, 6);
     expect(controls[controls.length - 1].x).toBeCloseTo(1000, 6); // spans the transect
   });
 
   it('the horizon control points build a surface via the shared service', () => {
-    const field = buildFieldSection(wells, markers, 2200)!;
+    const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
     const controls = horizonControls(field, autoTrackHorizon(field.section, 1850));
     const xs = controls.map((c) => c.x), ys = controls.map((c) => c.y);
     const surface = buildSurface(controls, { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys), nx: 20, ny: 20 });

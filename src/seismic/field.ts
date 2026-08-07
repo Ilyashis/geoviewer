@@ -1,8 +1,6 @@
 import type { Marker, Well } from '../types';
 import { buildSyntheticSection, type Reflector, type SeismicSection } from './section';
-
-/** Two-way time (ms) for a depth at a constant velocity. */
-const twt = (depth: number, v: number) => (2 * depth / v) * 1000;
+import { depthToTwt, DEFAULT_VELOCITY, type VelocityModel } from '../core/velocity';
 
 export interface WellPost {
   id: string;
@@ -14,7 +12,7 @@ export interface WellPost {
 
 export interface FieldSection {
   section: SeismicSection;
-  velocity: number;
+  velocity: VelocityModel;
   wells: WellPost[];
   /** Straight transect the traces run along, in map coordinates (trace frac 0→1 = p0→p1). */
   line: { p0: { x: number; y: number }; p1: { x: number; y: number } };
@@ -26,7 +24,7 @@ export interface FieldSection {
  * posted with their tops as tie markers. This is the demo bridge — a later stage
  * picks the horizon and feeds it to buildSurface.
  */
-export function buildFieldSection(coordWells: Well[], markers: Marker[], velocity = 2200): FieldSection | null {
+export function buildFieldSection(coordWells: Well[], markers: Marker[], velocity: VelocityModel = DEFAULT_VELOCITY): FieldSection | null {
   const wells = coordWells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y));
   if (wells.length < 2) return null;
 
@@ -43,7 +41,7 @@ export function buildFieldSection(coordWells: Well[], markers: Marker[], velocit
   for (const m of mappable) {
     const pts = wells
       .filter((w) => Number.isFinite(m.depths[w.id]))
-      .map((w) => ({ f: xFrac(w.x!), t: twt(m.depths[w.id], velocity) }))
+      .map((w) => ({ f: xFrac(w.x!), t: depthToTwt(velocity, m.depths[w.id]) }))
       .sort((a, b) => a.f - b.f);
     const first = pts[0], last = pts[pts.length - 1];
     const slope = last.f > first.f ? (last.t - first.t) / (last.f - first.f) : 0;
@@ -74,7 +72,7 @@ export function buildFieldSection(coordWells: Well[], markers: Marker[], velocit
     xFrac: xFrac(w.x!),
     tops: mappable
       .filter((m) => Number.isFinite(m.depths[w.id]))
-      .map((m) => ({ label: m.label, color: m.color, twt: twt(m.depths[w.id], velocity) })),
+      .map((m) => ({ label: m.label, color: m.color, twt: depthToTwt(velocity, m.depths[w.id]) })),
   }));
 
   const p0w = wells.reduce((a, b) => (a.x! <= b.x! ? a : b));

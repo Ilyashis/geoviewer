@@ -1,9 +1,7 @@
 import type { SeismicSection } from './section';
 import type { FieldSection } from './field';
 import type { ControlPoint } from '../core/framework';
-
-/** Depth (m) for a two-way time at a constant velocity — inverse of the field's depth→TWT. */
-export const twtToDepth = (twtMs: number, v: number) => (twtMs * v) / 2 / 1000;
+import { twtToDepth } from '../core/velocity';
 
 /**
  * Auto-track a reflector from a seed TWT: at each trace follow the strongest
@@ -68,7 +66,7 @@ export function horizonControls(field: FieldSection, horizonTwt: Float64Array): 
     out.push({
       x: line.p0.x + f * (line.p1.x - line.p0.x),
       y: line.p0.y + f * (line.p1.y - line.p0.y),
-      z: twtToDepth(horizonTwt[i], velocity),
+      z: twtToDepth(velocity, horizonTwt[i]),
     });
   }
   return out;
