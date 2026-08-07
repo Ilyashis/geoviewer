@@ -7,6 +7,19 @@ import type { TopRow } from './tops/csv';
 import type { LithoRow } from './lithology/csv';
 import { mapLithology, mapSaturation } from './lithology/map';
 import type { ProjectMeta } from './persistence';
+import type { SurveyStation } from './geo/deviation';
+
+/** A deviated demo trajectory: vertical to a kickoff, build angle, then hold. */
+function demoSurvey(i: number): SurveyStation[] {
+  const azi = (i * 97) % 360;
+  const maxInc = 22 + (i % 3) * 12; // 22° / 34° / 46°
+  return [
+    { md: 0, inc: 0, azi },
+    { md: 1600, inc: 0, azi },
+    { md: 2200, inc: maxInc, azi },
+    { md: 3200, inc: maxInc, azi },
+  ];
+}
 
 export interface ImportSummary {
   surfaces: number;
@@ -93,6 +106,8 @@ export const useStore = create<AppState>((set, get) => ({
         // Scatter demo wells over a plausible field so the map has real coordinates.
         well.x = 12000 + (i % 3) * 850 + ((i * 137) % 300);
         well.y = 48000 + Math.floor(i / 3) * 700 + ((i * 91) % 260);
+        // Make every other demo well deviated, so TVD/offset is exercised.
+        if (i % 2 === 1) well.survey = demoSurvey(i);
       }
 
       set((s) => {

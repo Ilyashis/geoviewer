@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigation } from 'lucide-react';
 import type { Marker, Well } from '../types';
 import { idwGrid, contourLevels } from '../geo/grid';
+import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../geo/deviation';
 import { marchingSquares } from '../geo/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../geo/volumetrics';
 import { aggregateZone, DEFAULT_PETRO, type PetroParams } from '../geo/petrophysics';
@@ -81,15 +82,30 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const top = mappable.find((m) => m.id === topId) ?? mappable[0] ?? null;
   const base = mappable.find((m) => m.id === baseId) ?? mappable.find((m) => m.id !== top?.id) ?? null;
 
+  // Deviation trajectories (only for wells with a survey); vertical wells fall back to MD.
+  const trajs = useMemo(() => {
+    const m = new Map<string, TrajPoint[]>();
+    for (const w of coordWells) if (w.survey && w.survey.length) m.set(w.id, computeTrajectory(w.survey));
+    return m;
+  }, [coordWells]);
+  const anyDeviated = trajs.size > 0;
+  const tvdssAt = (w: Well, md: number) => tvdAtMd(trajs.get(w.id) ?? [], md) - (w.kb ?? 0);
+  const posAt = (w: Well, md: number) => {
+    const p = positionAtMd(trajs.get(w.id) ?? [], md);
+    return { x: w.x! + p.east, y: w.y! + p.north };
+  };
+
   const field = useMemo<Field | null>(() => {
-    const build = (fn: (w: Well) => number | null, title: string): Field | null => {
+    // valueMd → the mapped value plus the MD used to place the (deviated) point.
+    const build = (valueMd: (w: Well) => { value: number; posMd: number } | null, title: string): Field | null => {
       const points: Field['points'] = [];
       const byWell: Record<string, number> = {};
       for (const w of coordWells) {
-        const z = fn(w);
-        if (z == null || !Number.isFinite(z)) continue;
-        points.push({ x: w.x!, y: w.y!, z });
-        byWell[w.id] = z;
+        const r = valueMd(w);
+        if (!r || !Number.isFinite(r.value)) continue;
+        const pos = posAt(w, r.posMd);
+        points.push({ x: pos.x, y: pos.y, z: r.value });
+        byWell[w.id] = r.value;
       }
       if (points.length < 3) return null;
       const zs = points.map((p) => p.z);
@@ -98,14 +114,18 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
 
     if (mode === 'structure') {
       if (!surface) return null;
-      return build((w) => (Number.isFinite(surface.depths[w.id]) ? surface.depths[w.id] : null), `${surface.label} · глубина, м`);
+      return build((w) => {
+        const md = surface.depths[w.id];
+        return Number.isFinite(md) ? { value: tvdssAt(w, md), posMd: md } : null;
+      }, `${surface.label} · TVDSS, м`);
     }
     if (!top || !base || top.id === base.id) return null;
     return build((w) => {
       const t = top.depths[w.id], b = base.depths[w.id];
-      return Number.isFinite(t) && Number.isFinite(b) ? b - t : null;
-    }, `${top.label}–${base.label} · толщина, м`);
-  }, [mode, surface, top, base, coordWells]);
+      if (!Number.isFinite(t) || !Number.isFinite(b)) return null;
+      return { value: tvdssAt(w, b) - tvdssAt(w, t), posMd: t }; // true vertical thickness
+    }, `${top.label}–${base.label} · толщина TVT, м`);
+  }, [mode, surface, top, base, coordWells, trajs]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -143,16 +163,20 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     return idwGrid(field.points, g.minX, g.maxX, g.minY, g.maxY, g.nx, g.ny);
   }, [field, gridGeom]);
 
-  // Top-surface structure on the same mesh — depths for the OWC clip.
+  // Top-surface structure (TVDSS) on the same mesh — depths for the OWC clip.
   const topGrid = useMemo(() => {
     if (mode !== 'isochore' || !top || !gridGeom) return null;
-    const points = coordWells
-      .filter((w) => Number.isFinite(top.depths[w.id]))
-      .map((w) => ({ x: w.x!, y: w.y!, z: top.depths[w.id] }));
+    const points: { x: number; y: number; z: number }[] = [];
+    for (const w of coordWells) {
+      const md = top.depths[w.id];
+      if (!Number.isFinite(md)) continue;
+      const pos = posAt(w, md);
+      points.push({ x: pos.x, y: pos.y, z: tvdssAt(w, md) });
+    }
     if (points.length < 3) return null;
     const g = gridGeom;
     return idwGrid(points, g.minX, g.maxX, g.minY, g.maxY, g.nx, g.ny);
-  }, [mode, top, coordWells, gridGeom]);
+  }, [mode, top, coordWells, gridGeom, trajs]);
 
   const contact = useMemo<Contact | undefined>(
     () => (owcOn && topGrid && owc > 0 ? { owc, top: topGrid } : undefined),
@@ -239,11 +263,13 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   // Suggested contact: partway down the top-surface depth range, so a closure exists.
   const owcDefault = useMemo(() => {
     if (mode !== 'isochore' || !top) return 0;
-    const zs = coordWells.map((w) => top.depths[w.id]).filter((z) => Number.isFinite(z)) as number[];
+    const zs = coordWells
+      .filter((w) => Number.isFinite(top.depths[w.id]))
+      .map((w) => tvdssAt(w, top.depths[w.id])); // OWC is a TVDSS depth
     if (zs.length < 3) return 0;
     const lo = Math.min(...zs), hi = Math.max(...zs);
     return Math.round(lo + 0.55 * (hi - lo));
-  }, [mode, top, coordWells]);
+  }, [mode, top, coordWells, trajs]);
 
   useEffect(() => {
     if (owcOn && owc === 0 && owcDefault > 0) setOwc(owcDefault);
@@ -301,6 +327,20 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const pts = layout?.pts ?? [];
   const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`).join(' ');
 
+  // Plan-view deviation: wellhead → bottom-hole drift at the deepest mapped pick.
+  const devVectors = layout
+    ? coordWells.flatMap((w) => {
+        const tr = trajs.get(w.id);
+        if (!tr) return [];
+        let maxMd = -Infinity;
+        for (const m of mappable) { const d = m.depths[w.id]; if (Number.isFinite(d) && d > maxMd) maxMd = d; }
+        if (!Number.isFinite(maxMd)) return [];
+        const dp = positionAtMd(tr, maxMd);
+        const s = layout.toPx(w.x!, w.y!), e = layout.toPx(w.x! + dp.east, w.y! + dp.north);
+        return [{ id: w.id, sx: s.px, sy: s.py, ex: e.px, ey: e.py }];
+      })
+    : [];
+
   const SurfBtns = ({ selId, onSel }: { selId: string | undefined; onSel: (id: string) => void }) => (
     <>
       {mappable.map((m) => (
@@ -319,6 +359,12 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
           <path d={path} fill="none" stroke="var(--accent)" strokeWidth={2} strokeOpacity={0.75}
             strokeDasharray="2 5" strokeLinecap="round" />
         )}
+        {devVectors.map((d) => (
+          <g key={`dev-${d.id}`} className="map-dev">
+            <line x1={d.sx} y1={d.sy} x2={d.ex} y2={d.ey} />
+            <circle cx={d.ex} cy={d.ey} r={3} />
+          </g>
+        ))}
         {pts.map((p) => {
           const active = p.id === activeWellId;
           const flip = p.px > size.w - (p.name.length * 8 + 34);
@@ -376,6 +422,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             </div>
             <div className="map-leg-row"><span className="map-leg-line" /> профиль · изолинии</div>
             {contact && <div className="map-leg-row"><span className="map-leg-owc" /> ВНК {Math.round(owc)} м</div>}
+            {anyDeviated && <div className="map-leg-row"><span className="map-leg-dev" /> накл. ствол → снос/TVDSS</div>}
           </>
         ) : (
           <div className="map-leg-row"><span className="map-leg-line" /> профиль корреляции</div>

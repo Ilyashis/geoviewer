@@ -5,6 +5,8 @@
  * a full geoscience project (trajectories/TVD, seismic, grids) without a rewrite.
  */
 
+import type { SurveyStation } from './geo/deviation';
+
 /** A single logged curve (channel) within a well. */
 export interface Curve {
   /** Mnemonic, e.g. "GR", "RHOB", "NPHI". */
@@ -48,6 +50,10 @@ export interface Well {
   /** Surface location; optional until we import headers/coordinates. */
   x?: number;
   y?: number;
+  /** Deviation survey; absent ⇒ the well is treated as vertical (MD = TVD). */
+  survey?: SurveyStation[];
+  /** Depth-reference (KB) elevation above sea level; TVDSS = TVD − kb. */
+  kb?: number;
   /** Measured depth samples (the index curve). All curves share this array. */
   depth: number[];
   /** Unit of the depth index, e.g. "M" or "FT". */
