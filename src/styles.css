@@ -528,6 +528,45 @@ body {
   background: var(--canvas); border: 1px solid var(--border); color: var(--text-2); cursor: pointer;
 }
 .vol-exp-btn:hover { color: var(--text); border-color: var(--accent); }
+
+/* --- Reserves summary tab --- */
+.rsum { padding: 24px 28px; overflow: auto; height: 100%; }
+.rsum-bar { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.rsum-title { font-size: 15px; font-weight: 650; margin-right: auto; align-self: center; }
+.rsum-src { width: 180px; flex: none; margin-bottom: 0; }
+.rsum-in { display: flex; flex-direction: column; gap: 3px; }
+.rsum-in span { font-size: 10px; font-family: var(--mono); color: var(--text-3); text-align: center; }
+.rsum-in input {
+  width: 64px; background: var(--canvas); border: 1px solid var(--border); border-radius: var(--r-sm);
+  color: var(--text); font: 13px var(--mono); padding: 5px 6px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.rsum-in input:focus { outline: none; border-color: var(--accent); }
+.rsum-exp {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: var(--r-sm);
+  background: var(--canvas); border: 1px solid var(--border); color: var(--text-2); cursor: pointer; font-size: 13px; align-self: flex-end;
+}
+.rsum-exp:hover { color: var(--text); border-color: var(--accent); }
+.rsum-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--r-md); }
+.rsum-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rsum-table th, .rsum-table td { padding: 10px 14px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+.rsum-table th {
+  background: var(--panel-2); color: var(--text-3); font-weight: 600; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.03em; border-bottom: 1px solid var(--border); font-family: inherit; position: sticky; top: 0;
+}
+.rsum-table td { border-bottom: 1px solid var(--hairline); color: var(--text-2); }
+.rsum-table .l { text-align: left; }
+.rsum-table td.l { color: var(--text); font-family: inherit; font-weight: 550; }
+.rsum-table td.accent { color: var(--accent-2); font-weight: 600; }
+.rsum-table tbody tr:hover td { background: rgba(255, 255, 255, 0.02); }
+.rsum-total td { border-top: 2px solid var(--border); border-bottom: 0; background: rgba(58, 163, 201, 0.06); color: var(--text); font-weight: 650; }
+.rsum-total td.accent { color: var(--accent-2); }
+.rsum-tag {
+  margin-left: 8px; font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 5px; border-radius: 4px; vertical-align: middle;
+}
+.rsum-tag.logs { background: rgba(122, 208, 168, 0.14); color: var(--accent-2); }
+.rsum-tag.manual { background: rgba(151, 178, 196, 0.12); color: var(--text-3); }
+.rsum-note { margin-top: 12px; font-size: 11px; color: var(--text-3); }
 .vol-in { display: flex; flex-direction: column; gap: 3px; }
 .vol-in span { font-size: 10px; font-family: var(--mono); color: var(--text-3); text-align: center; }
 .vol-in input {
