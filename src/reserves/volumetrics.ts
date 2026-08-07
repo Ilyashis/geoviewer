@@ -1,4 +1,5 @@
 import type { Grid } from '../core/geom/grid';
+import { pointInPolygon, type Pt } from '../core/geom/polygon';
 
 /** Deterministic (single-scenario) volumetric parameters for an oil zone. */
 export interface VolParams {
@@ -41,15 +42,25 @@ export interface Contact {
  * With a `contact`, each cell contributes only its hydrocarbon column — the part
  * of [topZ, topZ+thickness] shallower than `owc`: h = clamp(owc − topZ, 0, th).
  * `area`/`meanThickness` then describe the productive area and HC column.
+ *
+ * With a `pinchout` boundary, a cell whose centre falls outside the polygon is
+ * excluded outright — the reservoir doesn't exist there (a depositional edge or
+ * erosional limit), independent of whatever the interpolated grid says.
  */
-export function volumetrics(grid: Grid, p: VolParams, contact?: Contact): VolResult {
+export function volumetrics(grid: Grid, p: VolParams, contact?: Contact, pinchout?: Pt[]): VolResult {
   const cellArea = grid.dx * grid.dy;
   const aligned = contact && contact.top.z.length === grid.z.length;
+  const clip = pinchout && pinchout.length >= 3 ? pinchout : undefined;
   let gross = 0;
   let area = 0;
   for (let k = 0; k < grid.z.length; k++) {
     const th = grid.z[k];
     if (th <= 0) continue;
+    if (clip) {
+      const x = grid.minX + (k % grid.nx) * grid.dx;
+      const y = grid.minY + Math.floor(k / grid.nx) * grid.dy;
+      if (!pointInPolygon({ x, y }, clip)) continue;
+    }
     const h = aligned ? Math.max(0, Math.min(th, contact!.owc - contact!.top.z[k])) : th;
     if (h > 0) { gross += h * cellArea; area += cellArea; }
   }

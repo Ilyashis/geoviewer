@@ -10,7 +10,7 @@ const det: VolResult = {
 const base: ReservesInput = {
   zone: 'Top A–KP S8', source: 'logs', wellCount: 6, logWells: 6,
   params: { ng: 0.39, phi: 0.158, sw: 0.5, bo: 1.2, rf: 0.3 },
-  owc: 2067, det, mc: null, date: '2026-08-07 02:10',
+  owc: 2067, pinchoutVertices: null, det, mc: null, date: '2026-08-07 02:10',
 };
 
 describe('buildReservesCsv', () => {
@@ -30,6 +30,11 @@ describe('buildReservesCsv', () => {
     expect(csv).not.toContain('ВНК');
     expect(csv).toContain('Площадь,1.57,км²');
     expect(csv).toContain('Источник параметров,Ручные');
+  });
+
+  it('includes the pinch-out polygon vertex count when applied', () => {
+    const csv = buildReservesCsv({ ...base, pinchoutVertices: 5 });
+    expect(csv).toContain('Полигон выклинивания,5,вершин');
   });
 
   it('appends the P90/P50/P10 block when Monte-Carlo is present', () => {

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Navigation } from 'lucide-react';
 import type { Marker, Well } from '../types';
 import { contourLevels } from '../core/geom/grid';
+import type { Pt } from '../core/geom/polygon';
 import { buildSurface, type ControlPoint } from '../core/framework';
 import { tvdss } from '../core/crs';
 import { useStore } from '../store';
@@ -60,6 +61,10 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const [petro, setPetro] = useState<PetroParams>(DEFAULT_PETRO);
   const [owcOn, setOwcOn] = useState(false);
   const [owc, setOwc] = useState(0);
+  const [pinchOn, setPinchOn] = useState(false);
+  const [pinchPts, setPinchPts] = useState<Pt[]>([]);
+  const [drawingPinch, setDrawingPinch] = useState(false);
+  const pinchDragRef = useRef<number | null>(null);
   const [uncOn, setUncOn] = useState(false);
   const [spread, setSpread] = useState(20);
 
@@ -160,7 +165,8 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     const scale = Math.min((size.w - 2 * PAD) / spanX, (size.h - 2 * PAD) / spanY);
     const ox = (size.w - spanX * scale) / 2, oy = (size.h - spanY * scale) / 2;
     const toPx = (x: number, y: number) => ({ px: ox + (x - minX) * scale, py: oy + (maxY - y) * scale });
-    return { minX, maxX, minY, maxY, scale, toPx, pts: positions.map((p) => ({ ...p, ...toPx(p.x, p.y) })) };
+    const fromPx = (px: number, py: number): Pt => ({ x: minX + (px - ox) / scale, y: maxY - (py - oy) / scale });
+    return { minX, maxX, minY, maxY, scale, toPx, fromPx, pts: positions.map((p) => ({ ...p, ...toPx(p.x, p.y) })) };
   }, [positions, size]);
 
   // Shared mesh (data space, resolution independent of pixel size) so the field
@@ -292,9 +298,15 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     if (owcOn && owc === 0 && owcDefault > 0) setOwc(owcDefault);
   }, [owcOn, owc, owcDefault]);
 
+  // Pinch-out boundary: only a closed (≥3-vertex) polygon clips the volume.
+  const pinchClip = useMemo<Pt[] | undefined>(
+    () => (pinchOn && pinchPts.length >= 3 ? pinchPts : undefined),
+    [pinchOn, pinchPts],
+  );
+
   const volResult = useMemo(
-    () => (mode === 'isochore' && grid ? volumetrics(grid, effVol, contact) : null),
-    [mode, grid, effVol, contact],
+    () => (mode === 'isochore' && grid ? volumetrics(grid, effVol, contact, pinchClip) : null),
+    [mode, grid, effVol, contact, pinchClip],
   );
 
   // Probabilistic reserves: Monte-Carlo the recovery chain around the deterministic modes.
@@ -312,6 +324,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       logWells: logStats?.wellsUsed,
       params: effVol,
       owc: contact ? owc : null,
+      pinchoutVertices: pinchClip ? pinchClip.length : null,
       det: volResult,
       mc,
       spreadPct: uncOn ? spread : undefined,
@@ -329,6 +342,36 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     const img = renderReservesJpeg(r);
     triggerDownload(`reserves-${fileStamp()}.pdf`, URL.createObjectURL(jpegToPdf(img.dataUrl, img.width, img.height)), true);
   };
+
+  // --- Pinch-out polygon: click-to-place vertices, then drag any of them ---
+  // Checking the box keeps an already-drawn polygon (like the ВНК depth persists
+  // when its checkbox is toggled) — only an empty polygon prompts a fresh draw.
+  const togglePinchOn = (checked: boolean) => {
+    setPinchOn(checked);
+    setDrawingPinch(checked && pinchPts.length < 3);
+  };
+  const redrawPinch = () => { setDrawingPinch(true); setPinchPts([]); };
+  const finishPinchDraw = () => setDrawingPinch(false);
+  const cancelPinchDraw = () => { setDrawingPinch(false); setPinchOn(false); setPinchPts([]); };
+
+  const svgDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (!drawingPinch || !layout) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    setPinchPts((pts) => [...pts, layout.fromPx(e.clientX - rect.left, e.clientY - rect.top)]);
+  };
+  const vertexDown = (i: number) => (e: ReactPointerEvent<SVGCircleElement>) => {
+    e.stopPropagation();
+    pinchDragRef.current = i;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const svgMove = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (pinchDragRef.current == null || !layout) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pt = layout.fromPx(e.clientX - rect.left, e.clientY - rect.top);
+    const idx = pinchDragRef.current;
+    setPinchPts((pts) => pts.map((p, k) => (k === idx ? pt : p)));
+  };
+  const svgUp = () => { pinchDragRef.current = null; };
 
   if (wells.length === 0) {
     return (
@@ -364,6 +407,10 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     ? seismicLines.map((pts) => pts.map((c, i) => { const p = layout.toPx(c.x, c.y); return `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`; }).join(' '))
     : [];
 
+  const pinchScreenPts = layout ? pinchPts.map((p) => layout.toPx(p.x, p.y)) : [];
+  const pinchClosed = pinchOn && pinchPts.length >= 3;
+  const pinchOutline = pinchScreenPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`).join(' ') + (pinchClosed ? ' Z' : '');
+
   const SurfBtns = ({ selId, onSel }: { selId: string | undefined; onSel: (id: string) => void }) => (
     <>
       {mappable.map((m) => (
@@ -377,7 +424,22 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   return (
     <div className="map" ref={wrapRef}>
       <canvas ref={canvasRef} className="map-canvas" style={{ width: size.w, height: size.h }} />
-      <svg className="map-svg" width={size.w} height={size.h}>
+      <svg className="map-svg" width={size.w} height={size.h}
+        style={{ cursor: drawingPinch ? 'crosshair' : undefined }}
+        onPointerDown={svgDown} onPointerMove={svgMove} onPointerUp={svgUp}>
+        {pinchOn && pinchScreenPts.length > 0 && (
+          <g className="map-pinch">
+            {pinchClosed && (
+              <path
+                d={`M0 0H${size.w}V${size.h}H0Z ${pinchOutline}`}
+                fillRule="evenodd" className="map-pinch-mask" />
+            )}
+            <path d={pinchOutline} fill="none" className="map-pinch-line" />
+            {pinchScreenPts.map((p, i) => (
+              <circle key={i} cx={p.px} cy={p.py} r={6} className="map-pinch-vertex" onPointerDown={vertexDown(i)} />
+            ))}
+          </g>
+        )}
         {pts.length > 1 && (
           <path d={path} fill="none" stroke="var(--accent)" strokeWidth={2} strokeOpacity={0.75}
             strokeDasharray="2 5" strokeLinecap="round" />
@@ -439,6 +501,15 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
 
       <div className="map-north"><Navigation size={16} strokeWidth={1.9} /> С</div>
 
+      {drawingPinch && (
+        <div className="map-draw-hint">
+          <span>Кликайте по карте, чтобы поставить точки контура выклинивания</span>
+          <b>{pinchPts.length} точ.</b>
+          <button className="map-draw-btn on" disabled={pinchPts.length < 3} onClick={finishPinchDraw}>Готово</button>
+          <button className="map-draw-btn" onClick={cancelPinchDraw}>Отмена</button>
+        </div>
+      )}
+
       <div className="map-legend">
         {field ? (
           <>
@@ -449,6 +520,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             </div>
             <div className="map-leg-row"><span className="map-leg-line" /> профиль · изолинии</div>
             {contact && <div className="map-leg-row"><span className="map-leg-owc" /> ВНК {Math.round(owc)} м</div>}
+            {pinchClip && <div className="map-leg-row"><span className="map-leg-pinch" /> выклинивание ({pinchClip.length} верш.)</div>}
             {anyDeviated && <div className="map-leg-row"><span className="map-leg-dev" /> накл. ствол → снос/TVDSS</div>}
             {seismicControls && seismicControls.length > 0 && (
               <div className="map-leg-row"><span className="map-leg-seis" /> сейсмо-горизонт ({seismicControls.length} тчк{seismicLines.length > 1 ? `, ${seismicLines.length} лин.` : ''})</div>
@@ -511,6 +583,18 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             )}
           </div>
           {owcOn && !topGrid && <div className="vol-note">Нет структуры кровли — контакт не применён.</div>}
+          <div className="vol-owc">
+            <label className="vol-owc-tog">
+              <input type="checkbox" checked={pinchOn} onChange={(e) => togglePinchOn(e.target.checked)} />
+              <span>Полигон выклинивания</span>
+            </label>
+            {pinchOn && !drawingPinch && (
+              <button className="vol-pinch-redraw" onClick={redrawPinch}>перерисовать</button>
+            )}
+          </div>
+          {pinchOn && !drawingPinch && pinchPts.length < 3 && (
+            <div className="vol-note">Нужно ≥3 точки контура — нажмите «перерисовать».</div>
+          )}
           <div className="vol-results">
             <VolRow k={contact ? 'Площадь в ВНК' : 'Площадь'} v={`${volResult.areaKm2.toFixed(2)} км²`} />
             <VolRow k={contact ? 'Ср. HC-толщина' : 'Ср. толщина'} v={`${volResult.meanThickness.toFixed(1)} м`} />
@@ -521,9 +605,14 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             <VolRow k="Извлекаемые" v={fmtM(volResult.recoverableBbl, 'барр')} strong />
           </div>
           <div className="vol-note">
-            {contact
-              ? `Только порода выше ВНК ${Math.round(owc)} м · замыкание не учитывается.`
-              : 'Интеграл по всей площади карты · без учёта контакта.'}
+            {(() => {
+              const clips: string[] = [];
+              if (contact) clips.push(`только порода выше ВНК ${Math.round(owc)} м`);
+              if (pinchClip) clips.push(`в пределах контура выклинивания (${pinchClip.length} верш.)`);
+              return clips.length
+                ? `${clips.join(' · ')} · замыкание не учитывается.`
+                : 'Интеграл по всей площади карты · без учёта контакта.';
+            })()}
           </div>
           <div className="vol-owc vol-unc-tog">
             <label className="vol-owc-tog">

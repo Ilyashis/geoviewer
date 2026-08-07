@@ -8,6 +8,7 @@ export interface ReservesInput {
   logWells?: number;
   params: { ng: number; phi: number; sw: number; bo: number; rf: number };
   owc: number | null;
+  pinchoutVertices: number | null;
   det: VolResult;
   mc: McResult | null;
   spreadPct?: number;
@@ -41,6 +42,7 @@ export function buildReservesCsv(r: ReservesInput): string {
   row('Bo', trim(r.params.bo, 3));
   row('ККИН', trim(r.params.rf, 3));
   if (r.owc != null) row('ВНК', int(r.owc), 'м');
+  if (r.pinchoutVertices != null) row('Полигон выклинивания', r.pinchoutVertices, 'вершин');
   row('');
   row('Показатель', 'Значение', 'Ед.');
   row(r.owc != null ? 'Площадь в ВНК' : 'Площадь', trim(r.det.areaKm2, 3), 'км²');
@@ -92,6 +94,7 @@ function buildOps(r: ReservesInput): Op[] {
     { t: 'row', k: 'ККИН', v: trim(r.params.rf, 3) },
   ];
   if (r.owc != null) ops.push({ t: 'row', k: 'ВНК · контакт', v: `${Math.round(r.owc)} м` });
+  if (r.pinchoutVertices != null) ops.push({ t: 'row', k: 'Полигон выклинивания', v: `${r.pinchoutVertices} вершин` });
   ops.push(
     { t: 'gap', h: 8 }, { t: 'div' }, { t: 'gap', h: 8 },
     { t: 'head', s: 'Результат' },

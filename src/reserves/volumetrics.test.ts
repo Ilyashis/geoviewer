@@ -52,6 +52,22 @@ describe('volumetrics', () => {
     expect(r.areaKm2).toBeCloseTo(0.02, 6);
   });
 
+  it('excludes cells outside a pinch-out polygon regardless of thickness', () => {
+    const th = flatGrid(10); // 2×2 cells at (0,0) (100,0) (0,100) (100,100)
+    const p = { ng: 1, phi: 1, sw: 0, bo: 1, rf: 1 };
+    // Rectangle covering only the x=0 column (cells at x=0), excluding x=100.
+    const leftHalf = [{ x: -10, y: -10 }, { x: 50, y: -10 }, { x: 50, y: 110 }, { x: -10, y: 110 }];
+    const r = volumetrics(th, p, undefined, leftHalf);
+    expect(r.grossM3).toBeCloseTo(200000, 3); // 2 cells × 10 m × 10000 m²
+    expect(r.areaKm2).toBeCloseTo(0.02, 6);
+  });
+
+  it('a polygon with fewer than 3 points is treated as no boundary', () => {
+    const th = flatGrid(10);
+    const p = { ng: 1, phi: 1, sw: 0, bo: 1, rf: 1 };
+    expect(volumetrics(th, p, undefined, [{ x: 0, y: 0 }, { x: 1, y: 1 }]).grossM3).toBeCloseTo(400000, 3);
+  });
+
   it('ignores non-positive thickness cells', () => {
     const z = new Float64Array([10, -5, 0, 10]);
     const grid: Grid = { z, nx: 2, ny: 2, minX: 0, minY: 0, dx: 100, dy: 100, zmin: -5, zmax: 10 };
