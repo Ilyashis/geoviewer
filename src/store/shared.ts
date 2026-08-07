@@ -1,5 +1,5 @@
 import type { Well } from '../types';
-import type { SurveyStation } from '../geo/deviation';
+import type { SurveyStation } from '../wells/deviation';
 
 export const MARKER_COLORS = ['#AF52DE', '#FF9500', '#B6C2CE', '#10a1ff', '#00c7be', '#09b37b', '#eb5757'];
 

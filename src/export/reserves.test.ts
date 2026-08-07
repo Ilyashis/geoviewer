@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildReservesCsv, type ReservesInput } from './reserves';
-import type { VolResult } from '../geo/volumetrics';
+import type { VolResult } from '../reserves/volumetrics';
 
 const det: VolResult = {
   areaKm2: 1.57, meanThickness: 6.7, grossM3: 10_500_000, netM3: 4_095_000,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { summarizeZones, buildSummaryCsv, type SummaryOpts } from './reservesSummary';
-import { DEFAULT_PETRO } from './petrophysics';
+import { DEFAULT_PETRO } from '../wells/petrophysics';
 import type { Well, Marker } from '../types';
 
 function well(id: string, x: number, y: number): Well {

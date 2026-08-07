@@ -5,7 +5,7 @@
  * a full geoscience project (trajectories/TVD, seismic, grids) without a rewrite.
  */
 
-import type { SurveyStation } from './geo/deviation';
+import type { SurveyStation } from './wells/deviation';
 
 /** A single logged curve (channel) within a well. */
 export interface Curve {

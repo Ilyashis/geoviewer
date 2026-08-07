@@ -1,5 +1,5 @@
-import type { VolResult } from '../geo/volumetrics';
-import type { McResult } from '../geo/uncertainty';
+import type { VolResult } from '../reserves/volumetrics';
+import type { McResult } from '../reserves/uncertainty';
 
 export interface ReservesInput {
   zone: string;

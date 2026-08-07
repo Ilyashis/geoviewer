@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Download } from 'lucide-react';
 import type { Marker, Well } from '../types';
-import { summarizeZones, buildSummaryCsv } from '../geo/reservesSummary';
-import { DEFAULT_PETRO } from '../geo/petrophysics';
+import { summarizeZones, buildSummaryCsv } from '../reserves/reservesSummary';
+import { DEFAULT_PETRO } from '../wells/petrophysics';
 import { downloadText } from '../export/download';
 
 interface Props {

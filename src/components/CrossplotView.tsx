@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Marker, Well } from '../types';
-import { collectSamples, curveMnemonics, pearson, histogram } from '../geo/crossplot';
+import { collectSamples, curveMnemonics, pearson, histogram } from '../wells/crossplot';
 
 interface Props {
   wells: Well[];

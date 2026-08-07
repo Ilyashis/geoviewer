@@ -2,7 +2,7 @@ import type { StateCreator } from 'zustand';
 import type { LithoInterval, Well } from '../../types';
 import type { LithoRow } from '../../lithology/csv';
 import type { SurveyRow } from '../../survey/csv';
-import type { SurveyStation } from '../../geo/deviation';
+import type { SurveyStation } from '../../wells/deviation';
 import { parseLasToWell } from '../../las/parser';
 import { generateDemoLithology } from '../../plate/demoLithology';
 import { mapLithology, mapSaturation } from '../../lithology/map';

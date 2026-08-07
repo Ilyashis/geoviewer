@@ -1,7 +1,7 @@
 import type { Well, Marker } from '../types';
 import { idwGrid } from '../core/geom/grid';
 import { volumetrics } from './volumetrics';
-import { aggregateZone, type PetroParams } from './petrophysics';
+import { aggregateZone, type PetroParams } from '../wells/petrophysics';
 
 export interface ZoneReserve {
   topLabel: string;
