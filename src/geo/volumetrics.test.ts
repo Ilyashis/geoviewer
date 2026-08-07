@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { volumetrics } from './volumetrics';
-import type { Grid } from './grid';
+import type { Grid } from '../core/geom/grid';
 
 /** A flat 10-m-thick grid over a 100×100 m area (2×2 cells, dx=dy=100). */
 function flatGrid(thickness: number): Grid {

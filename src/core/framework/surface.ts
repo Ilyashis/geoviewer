@@ -1,4 +1,4 @@
-import { idwGrid, type Grid, type ControlPoint } from '../../geo/grid';
+import { idwGrid, type Grid, type ControlPoint } from '../geom/grid';
 
 /**
  * Structural framework — the integration point of the geological model.

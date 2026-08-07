@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigation } from 'lucide-react';
 import type { Marker, Well } from '../types';
-import { contourLevels } from '../geo/grid';
+import { contourLevels } from '../core/geom/grid';
 import { buildSurface, type ControlPoint } from '../core/framework';
 import { tvdss } from '../core/crs';
 import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../geo/deviation';
-import { marchingSquares } from '../geo/contours';
+import { marchingSquares } from '../core/geom/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../geo/volumetrics';
 import { aggregateZone, DEFAULT_PETRO, type PetroParams } from '../geo/petrophysics';
 import { monteCarlo, makeTriParams } from '../geo/uncertainty';

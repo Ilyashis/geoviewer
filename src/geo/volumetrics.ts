@@ -1,4 +1,4 @@
-import type { Grid } from './grid';
+import type { Grid } from '../core/geom/grid';
 
 /** Deterministic (single-scenario) volumetric parameters for an oil zone. */
 export interface VolParams {

@@ -1,5 +1,5 @@
 import type { Well, Marker } from '../types';
-import { idwGrid } from './grid';
+import { idwGrid } from '../core/geom/grid';
 import { volumetrics } from './volumetrics';
 import { aggregateZone, type PetroParams } from './petrophysics';
 

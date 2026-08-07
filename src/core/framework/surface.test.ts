@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildSurface } from './surface';
-import type { ControlPoint } from '../../geo/grid';
+import type { ControlPoint } from '../geom/grid';
 
 const mesh = { minX: 0, maxX: 100, minY: 0, maxY: 100, nx: 11, ny: 11 };
 
