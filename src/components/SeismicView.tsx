@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { Marker, Well } from '../types';
 import {
   buildFieldSection, autoTrackHorizon, horizonControls,
-  sampleNodes, interpolateHorizon, type HorizonNode,
+  sampleNodes, interpolateHorizon, tieToWells, type HorizonNode,
 } from '../seismic';
 import { buildSurface } from '../core/framework';
 import {
@@ -132,12 +132,17 @@ export function SeismicView({ wells, markers }: Props) {
     setEdit({ label, color, nodes: sampleNodes(autoTrackHorizon(field.section, seedTwt), NODE_COUNT) });
   };
 
-  // Fit v0/k so the wells' picked times convert to their known depths.
+  // Fit v0/k so the wells' picked times convert to their known depths, and — if a
+  // horizon is being edited — pull it exactly onto the well ties too. Calibration
+  // alone can't close the gap at a well: the demo reflector is a straight line
+  // through the two OUTER wells, so an inner well's true top needn't sit on it.
+  // Tying is the standard next interpretation step once you trust the wells.
   const calibrate = () => {
     if (!field) return;
     const samples: VelocitySample[] = field.wells.flatMap((w) => w.tops.map((t) => ({ depth: t.depth, twt: t.twt })));
     setCalModel(calibrateVelocity(samples));
     setConvKey('cal');
+    if (edit) setEdit({ ...edit, nodes: tieToWells(field, edit.label, edit.nodes) });
   };
 
   // --- Node drag editing ---
@@ -325,7 +330,8 @@ export function SeismicView({ wells, markers }: Props) {
         <span className="seismic-vel-l">Глубина</span>
         <button className={`seismic-vel-btn ${convKey === 'const' ? 'on' : ''}`} onClick={() => setConvKey('const')}>Постоянная</button>
         <button className={`seismic-vel-btn ${convKey === 'linear' ? 'on' : ''}`} onClick={() => setConvKey('linear')}>Компакция</button>
-        <button className={`seismic-vel-btn cal ${convKey === 'cal' ? 'on' : ''}`} onClick={calibrate}>Калибровать по скв.</button>
+        <button className={`seismic-vel-btn cal ${convKey === 'cal' ? 'on' : ''}`} onClick={calibrate}
+          title="Подбирает V₀/k по кровлям и, если горизонт снят, притягивает его узлы точно на скважины">Калибровать по скв.</button>
         {velTie != null && <span className={`seismic-vel-tie ${velTie < 8 ? 'ok' : ''}`} title="невязка v-модели по кровлям скважин">тай ±{Math.round(velTie)} м</span>}
       </div>
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildSyntheticSection } from './section';
 import { buildFieldSection } from './field';
-import { autoTrackHorizon, horizonControls, sampleNodes, interpolateHorizon } from './horizon';
+import { autoTrackHorizon, horizonControls, sampleNodes, interpolateHorizon, tieToWells } from './horizon';
 import { buildSurface } from '../core/framework';
 import { twtToDepth, DEFAULT_VELOCITY } from '../core/velocity';
 import type { Well, Marker } from '../types';
@@ -42,6 +42,33 @@ describe('editable nodes', () => {
     const h = interpolateHorizon([{ i: 2, twt: 300 }, { i: 6, twt: 300 }], 10);
     expect(h[0]).toBe(300);
     expect(h[9]).toBe(300);
+  });
+});
+
+describe('tieToWells', () => {
+  it('overwrites a node at a well trace with the exact well tie', () => {
+    const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
+    const nTraces = field.section.nTraces;
+    const wrong = sampleNodes(new Float64Array(nTraces).fill(1234), 5); // deliberately off
+    const tied = tieToWells(field, 'Top A', wrong);
+    const topA = (id: string) => field.wells.find((w) => w.id === id)!.tops.find((t) => t.label === 'Top A')!;
+    expect(tied.find((n) => n.i === 0)!.twt).toBeCloseTo(topA('a').twt, 6);
+    expect(tied.find((n) => n.i === nTraces - 1)!.twt).toBeCloseTo(topA('b').twt, 6);
+  });
+
+  it('inserts a node when no existing node sits on the well trace', () => {
+    const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
+    const nTraces = field.section.nTraces;
+    const nodes = [{ i: 40, twt: 1500 }, { i: 220, twt: 1600 }]; // neither at 0 or nTraces-1
+    const tied = tieToWells(field, 'Top A', nodes);
+    expect(tied).toHaveLength(4);
+    expect(tied.map((n) => n.i)).toEqual([0, 40, 220, nTraces - 1]); // inserted + sorted
+  });
+
+  it('is a no-op for a label with no well ties', () => {
+    const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
+    const nodes = sampleNodes(new Float64Array(field.section.nTraces).fill(1000), 5);
+    expect(tieToWells(field, 'Nonexistent', nodes)).toEqual(nodes);
   });
 });
 

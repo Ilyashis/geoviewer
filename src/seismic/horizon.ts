@@ -57,6 +57,26 @@ export function interpolateHorizon(nodes: HorizonNode[], nTraces: number): Float
 }
 
 /**
+ * Pin the horizon exactly through each well's picked time for `label` — the
+ * well-tie step after auto-tracking: forces agreement at the wells, leaves the
+ * tracked shape between them. A node already at a well's trace is overwritten;
+ * a trace with none gets one inserted.
+ */
+export function tieToWells(field: FieldSection, label: string, nodes: HorizonNode[]): HorizonNode[] {
+  const out = [...nodes];
+  const nTraces = field.section.nTraces;
+  for (const w of field.wells) {
+    const top = w.tops.find((t) => t.label === label);
+    if (!top) continue;
+    const i = Math.round(w.xFrac * (nTraces - 1));
+    const k = out.findIndex((n) => n.i === i);
+    if (k >= 0) out[k] = { i, twt: top.twt };
+    else out.push({ i, twt: top.twt });
+  }
+  return out.sort((a, b) => a.i - b.i);
+}
+
+/**
  * A tracked horizon (TWT per trace) → depth control points along the line, using
  * the given conversion velocity (the calibrated/chosen model, not the earth truth).
  */
