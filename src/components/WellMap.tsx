@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigation } from 'lucide-react';
 import type { Marker, Well } from '../types';
-import { idwGrid, contourLevels } from '../geo/grid';
+import { contourLevels } from '../geo/grid';
+import { buildSurface, type ControlPoint } from '../core/framework';
 import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../geo/deviation';
 import { marchingSquares } from '../geo/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../geo/volumetrics';
@@ -157,25 +158,26 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     return { minX, maxX, minY, maxY, nx, ny };
   }, [layout]);
 
-  const grid = useMemo(() => {
-    if (!field || !gridGeom) return null;
-    const g = gridGeom;
-    return idwGrid(field.points, g.minX, g.maxX, g.minY, g.maxY, g.nx, g.ny);
-  }, [field, gridGeom]);
+  // The mapped field, built through the structural-framework service: the map
+  // consumes a Surface rather than gridding raw picks itself. Well picks are the
+  // control-point source today; seismic horizons can feed the same service later.
+  const builtSurface = useMemo(
+    () => (field && gridGeom ? buildSurface(field.points, gridGeom) : null),
+    [field, gridGeom],
+  );
+  const grid = builtSurface?.grid ?? null;
 
   // Top-surface structure (TVDSS) on the same mesh — depths for the OWC clip.
   const topGrid = useMemo(() => {
     if (mode !== 'isochore' || !top || !gridGeom) return null;
-    const points: { x: number; y: number; z: number }[] = [];
+    const controls: ControlPoint[] = [];
     for (const w of coordWells) {
       const md = top.depths[w.id];
       if (!Number.isFinite(md)) continue;
       const pos = posAt(w, md);
-      points.push({ x: pos.x, y: pos.y, z: tvdssAt(w, md) });
+      controls.push({ x: pos.x, y: pos.y, z: tvdssAt(w, md) });
     }
-    if (points.length < 3) return null;
-    const g = gridGeom;
-    return idwGrid(points, g.minX, g.maxX, g.minY, g.maxY, g.nx, g.ny);
+    return buildSurface(controls, gridGeom)?.grid ?? null;
   }, [mode, top, coordWells, gridGeom, trajs]);
 
   const contact = useMemo<Contact | undefined>(
