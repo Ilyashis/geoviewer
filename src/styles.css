@@ -554,7 +554,7 @@ body {
 .vol-exp-btn:hover { color: var(--text); border-color: var(--accent); }
 
 /* --- Reserves summary tab --- */
-.rsum { padding: 24px 28px; overflow: auto; height: 100%; }
+.rsum { flex: 1; min-width: 0; padding: 24px 28px; overflow: auto; height: 100%; }
 .rsum-bar { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
 .rsum-title { font-size: 15px; font-weight: 650; margin-right: auto; align-self: center; }
 .rsum-src { width: 180px; flex: none; margin-bottom: 0; }
@@ -593,7 +593,7 @@ body {
 .rsum-note { margin-top: 12px; font-size: 11px; color: var(--text-3); }
 
 /* --- Crossplots tab --- */
-.xplot { display: flex; flex-direction: column; height: 100%; }
+.xplot { display: flex; flex-direction: column; flex: 1; min-width: 0; height: 100%; }
 .xplot-bar { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--hairline); }
 .xplot-plot { flex: 1; position: relative; min-height: 0; }
 .xplot-canvas { display: block; }

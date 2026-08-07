@@ -90,7 +90,7 @@ export function CrossplotView({ wells, markers, activeWellId }: Props) {
 
     const cs = getComputedStyle(document.documentElement);
     const v = (n: string, fb: string) => cs.getPropertyValue(n).trim() || fb;
-    const text = v('--text', '#f4f7fa'), text3 = v('--text-3', '#636e83'), grid = v('--plate-grid', 'rgba(151,178,196,0.10)'), border = v('--border', 'rgba(151,178,196,0.16)');
+    const text = v('--text', '#f4f7fa'), text2 = v('--text-2', '#97b2c4'), text3 = v('--text-3', '#636e83'), grid = v('--plate-grid', 'rgba(151,178,196,0.10)'), border = v('--border', 'rgba(151,178,196,0.16)');
     ctx.font = '11px ui-monospace, monospace';
 
     const L = 62, R = 20, T = 22, B = 46;
@@ -167,9 +167,15 @@ export function CrossplotView({ wells, markers, activeWellId }: Props) {
     ctx.fillText(axisLabel(x, logX), L + pw / 2, size.h - 8);
     ctx.save(); ctx.translate(16, T + ph / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(axisLabel(y, logY), 0, 0); ctx.restore();
 
-    // stats
-    ctx.textAlign = 'left'; ctx.fillStyle = text3;
-    ctx.fillText(`N = ${samples.length}${Number.isFinite(r) ? `   r = ${r.toFixed(2)}` : ''}${zone ? `   зона ${zone.top.label}–${zone.base.label}` : ''}`, L + 6, T + 14);
+    // stats chip (dark backing so it stays readable over the points/grid)
+    const stats = `N = ${samples.length}${Number.isFinite(r) ? `   r = ${r.toFixed(2)}` : ''}${zone ? `   ${zone.top.label}–${zone.base.label}` : ''}`;
+    ctx.textAlign = 'left';
+    const sw = ctx.measureText(stats).width;
+    ctx.fillStyle = 'rgba(19, 23, 27, 0.74)';
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(L + 5, T + 5, sw + 14, 20, 5); ctx.fill(); }
+    else ctx.fillRect(L + 5, T + 5, sw + 14, 20);
+    ctx.fillStyle = text2;
+    ctx.fillText(stats, L + 12, T + 18);
 
     // colour legend (top-right)
     const lw = 90, lh = 8, lx = L + pw - lw - 6, ly = T + 6;
