@@ -16,6 +16,8 @@ export interface FieldSection {
   section: SeismicSection;
   velocity: number;
   wells: WellPost[];
+  /** Straight transect the traces run along, in map coordinates (trace frac 0→1 = p0→p1). */
+  line: { p0: { x: number; y: number }; p1: { x: number; y: number } };
 }
 
 /**
@@ -75,5 +77,9 @@ export function buildFieldSection(coordWells: Well[], markers: Marker[], velocit
       .map((m) => ({ label: m.label, color: m.color, twt: twt(m.depths[w.id], velocity) })),
   }));
 
-  return { section, velocity, wells: posts };
+  const p0w = wells.reduce((a, b) => (a.x! <= b.x! ? a : b));
+  const p1w = wells.reduce((a, b) => (a.x! >= b.x! ? a : b));
+  const line = { p0: { x: p0w.x!, y: p0w.y! }, p1: { x: p1w.x!, y: p1w.y! } };
+
+  return { section, velocity, wells: posts, line };
 }

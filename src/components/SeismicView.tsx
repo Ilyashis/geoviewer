@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Marker, Well } from '../types';
-import { buildFieldSection } from '../seismic';
+import { buildFieldSection, autoTrackHorizon, horizonControls, twtToDepth } from '../seismic';
+import { buildSurface } from '../core/framework';
 
 interface Props {
   wells: Well[];
@@ -21,9 +22,55 @@ export function SeismicView({ wells, markers }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
+  const [picked, setPicked] = useState<{ label: string; color: string; twt: Float64Array } | null>(null);
 
   const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
   const field = useMemo(() => buildFieldSection(coordWells, markers, VELOCITY), [coordWells, markers]);
+
+  // Distinct tops on the line, each pickable as a horizon (seeded at its tie TWT).
+  const horizonList = useMemo(() => {
+    if (!field) return [];
+    const by = new Map<string, { color: string; sum: number; n: number }>();
+    for (const w of field.wells) for (const t of w.tops) {
+      const e = by.get(t.label) ?? { color: t.color, sum: 0, n: 0 };
+      e.sum += t.twt; e.n++; by.set(t.label, e);
+    }
+    return [...by.entries()].map(([label, e]) => ({ label, color: e.color, seedTwt: e.sum / e.n }));
+  }, [field]);
+
+  useEffect(() => { setPicked(null); }, [field]); // drop a stale pick when the field changes
+
+  // Snapped horizon → depth control points → surface via the shared framework
+  // service, plus how well the seismic depth agrees with the well picks.
+  const pick = useMemo(() => {
+    if (!field || !picked) return null;
+    const controls = horizonControls(field, picked.twt);
+    const zs = controls.map((c) => c.z), xs = controls.map((c) => c.x), ys = controls.map((c) => c.y);
+    const surface = buildSurface(controls, {
+      minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys), nx: 40, ny: 40,
+    });
+    // Validate against the wells that picked this top.
+    let maxMiss = 0;
+    for (const w of field.wells) {
+      const top = w.tops.find((t) => t.label === picked.label);
+      if (!top) continue;
+      const i = Math.round(w.xFrac * (field.section.nTraces - 1));
+      const seisDepth = twtToDepth(picked.twt[i], field.velocity);
+      maxMiss = Math.max(maxMiss, Math.abs(seisDepth - twtToDepth(top.twt, field.velocity)));
+    }
+    return {
+      n: controls.length,
+      twtMin: Math.min(...picked.twt), twtMax: Math.max(...picked.twt),
+      zMin: Math.min(...zs), zMax: Math.max(...zs),
+      gridded: !!surface, nx: surface?.grid.nx ?? 0, ny: surface?.grid.ny ?? 0,
+      maxMiss,
+    };
+  }, [field, picked]);
+
+  const snap = (label: string, color: string, seedTwt: number) => {
+    if (!field) return;
+    setPicked({ label, color, twt: autoTrackHorizon(field.section, seedTwt) });
+  };
 
   // Section rasterised once (data space) into an offscreen image.
   const image = useMemo(() => {
@@ -110,6 +157,18 @@ export function SeismicView({ wells, markers }: Props) {
       }
     }
 
+    // Picked horizon overlay (bright line following the tracked reflector).
+    if (picked) {
+      ctx.strokeStyle = picked.color; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      const n = section.nTraces;
+      for (let i = 0; i < n; i++) {
+        const x = xOf(n > 1 ? i / (n - 1) : 0), y = yOf(picked.twt[i]);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
     // Amplitude legend (blue — black — red).
     const lw = 96, lh = 8, lx = L + pw - lw - 8, ly = T + ph - 20;
     for (let i = 0; i < lw; i++) {
@@ -118,7 +177,7 @@ export function SeismicView({ wells, markers }: Props) {
     }
     ctx.strokeStyle = border; ctx.strokeRect(lx, ly, lw, lh);
     ctx.fillStyle = text3; ctx.textAlign = 'center'; ctx.fillText('амплитуда −/+', lx + lw / 2, ly - 5);
-  }, [field, image, size]);
+  }, [field, image, size, picked]);
 
   if (wells.length === 0) {
     return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Загрузите скважины — здесь появится синтетический сейсмо-разрез вдоль линии скважин с привязкой кровель.</p></div></div>;
@@ -130,6 +189,33 @@ export function SeismicView({ wells, markers }: Props) {
   return (
     <div className="seismic" ref={wrapRef}>
       <canvas ref={canvasRef} className="seismic-canvas" style={{ width: size.w, height: size.h }} />
+
+      {horizonList.length > 0 && (
+        <div className="seismic-panel">
+          <div className="seismic-panel-h">Снять горизонт</div>
+          <div className="seismic-picks">
+            {horizonList.map((h) => (
+              <button key={h.label} className={`seismic-pick ${picked?.label === h.label ? 'on' : ''}`}
+                onClick={() => snap(h.label, h.color, h.seedTwt)}>
+                <span className="seismic-dot" style={{ background: h.color }} />{h.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {pick && picked && (
+        <aside className="seismic-result">
+          <div className="seismic-result-h"><span className="seismic-dot" style={{ background: picked.color }} />Горизонт {picked.label}</div>
+          <div className="seismic-row"><span>Точек</span><b>{pick.n}</b></div>
+          <div className="seismic-row"><span>TWT</span><b>{Math.round(pick.twtMin)}–{Math.round(pick.twtMax)} мс</b></div>
+          <div className="seismic-row"><span>Глубина</span><b>{Math.round(pick.zMin)}–{Math.round(pick.zMax)} м</b></div>
+          <div className="seismic-row"><span>→ buildSurface</span><b>{pick.nx}×{pick.ny}</b></div>
+          <div className="seismic-row strong"><span>Согласие со скв.</span><b>±{pick.maxMiss.toFixed(1)} м</b></div>
+          <div className="seismic-note">Горизонт → контрольные точки → каркас (тот же <code>buildSurface</code>, что и для скважин).</div>
+        </aside>
+      )}
+
       <div className="seismic-badge">
         Синтетический разрез · {field.section.nTraces} трасс · v = {field.velocity} м/с (демо)
       </div>
