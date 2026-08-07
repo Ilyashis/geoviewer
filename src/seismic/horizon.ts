@@ -28,6 +28,36 @@ export function autoTrackHorizon(section: SeismicSection, seedTwt: number, windo
   return out;
 }
 
+/** An editable horizon node: a trace index and its TWT (ms). */
+export interface HorizonNode { i: number; twt: number }
+
+/** Sample a per-trace horizon down to `count` evenly-spaced editable nodes. */
+export function sampleNodes(horizonTwt: Float64Array, count: number): HorizonNode[] {
+  const n = horizonTwt.length;
+  const nodes: HorizonNode[] = [];
+  for (let k = 0; k < count; k++) {
+    const i = count > 1 ? Math.round((k / (count - 1)) * (n - 1)) : 0;
+    nodes.push({ i, twt: horizonTwt[i] });
+  }
+  return nodes;
+}
+
+/** Rebuild the per-trace horizon by linear interpolation between (edited) nodes. */
+export function interpolateHorizon(nodes: HorizonNode[], nTraces: number): Float64Array {
+  const out = new Float64Array(nTraces);
+  const ns = [...nodes].sort((a, b) => a.i - b.i);
+  if (ns.length === 0) return out;
+  for (let t = 0; t < nTraces; t++) {
+    if (t <= ns[0].i) { out[t] = ns[0].twt; continue; }
+    if (t >= ns[ns.length - 1].i) { out[t] = ns[ns.length - 1].twt; continue; }
+    let j = 0;
+    while (j < ns.length - 1 && ns[j + 1].i < t) j++;
+    const a = ns[j], b = ns[j + 1];
+    out[t] = b.i === a.i ? a.twt : a.twt + (b.twt - a.twt) * ((t - a.i) / (b.i - a.i));
+  }
+  return out;
+}
+
 /** A tracked horizon (TWT per trace) → depth control points along the line (any source). */
 export function horizonControls(field: FieldSection, horizonTwt: Float64Array): ControlPoint[] {
   const { line, section, velocity } = field;

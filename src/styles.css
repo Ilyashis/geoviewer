@@ -653,6 +653,12 @@ body {
 .seismic-apply:hover { filter: brightness(1.08); }
 .seismic-apply.on { background: transparent; color: var(--accent-2); border-color: var(--border); }
 .seismic-apply.on:hover { border-color: var(--accent-2); filter: none; }
+.seismic-hint { margin-top: 8px; font-size: 10.5px; color: var(--text-3); line-height: 1.4; }
+.seismic-remove {
+  display: block; width: 100%; margin-top: 6px; padding: 4px 0; border: 0; background: transparent;
+  color: var(--text-3); font-size: 11.5px; cursor: pointer;
+}
+.seismic-remove:hover { color: var(--danger); }
 .vol-in { display: flex; flex-direction: column; gap: 3px; }
 .vol-in span { font-size: 10px; font-family: var(--mono); color: var(--text-3); text-align: center; }
 .vol-in input {
