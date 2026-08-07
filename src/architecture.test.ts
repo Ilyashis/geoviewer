@@ -4,12 +4,12 @@ import { describe, it, expect } from 'vitest';
  * Architecture guard: enforces the module layering so boundaries don't rot as
  * the app grows.
  *
- *   core  ←  wells  ←  reserves          (arrows = "may import")
+ *   core  ←  wells ∥ seismic  ←  reserves      (arrows = "may import")
  *
  * - `core` is the shared kernel — a leaf: it imports nothing outside itself.
  * - Feature modules import core (and the shared `types`/`util`), never UI, the
- *   store, exporters or the app shell. `reserves` builds on `wells`, not vice
- *   versa. A future `seismic` module slots in as a peer of `wells`.
+ *   store, exporters or the app shell. `wells` and `seismic` are peers (neither
+ *   imports the other); `reserves` builds on `wells`, not vice versa.
  *
  * Unlisted top-level dirs (components, export, las, store, plate…) are the UI /
  * app shell and not-yet-modularised adapters — left unconstrained for now.
@@ -37,6 +37,7 @@ const moduleOf = (srcRelPath: string) => srcRelPath.replace(/^\.\//, '').split('
 const RULES: Record<string, Set<string>> = {
   core: new Set(['core']),
   wells: new Set(['core', 'wells', 'types', 'util']),
+  seismic: new Set(['core', 'seismic', 'types', 'util']),
   reserves: new Set(['core', 'reserves', 'wells', 'types', 'util']),
 };
 

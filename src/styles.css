@@ -611,6 +611,15 @@ body {
 .xp-logs input { accent-color: var(--accent); }
 .xp-zone { display: flex; align-items: flex-end; gap: 6px; }
 .xp-zone > span { font-size: 10px; font-family: var(--mono); color: var(--text-3); padding-bottom: 6px; }
+
+/* --- Seismic tab --- */
+.seismic { flex: 1; position: relative; overflow: hidden; background: var(--canvas); }
+.seismic-canvas { position: absolute; inset: 0; display: block; }
+.seismic-badge {
+  position: absolute; left: 18px; bottom: 14px; padding: 6px 12px; border-radius: var(--r-sm);
+  background: rgba(27, 33, 39, 0.85); backdrop-filter: blur(8px); border: 1px solid var(--border);
+  font-size: 11.5px; font-family: var(--mono); color: var(--text-2);
+}
 .vol-in { display: flex; flex-direction: column; gap: 3px; }
 .vol-in span { font-size: 10px; font-family: var(--mono); color: var(--text-3); text-align: center; }
 .vol-in input {
