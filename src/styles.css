@@ -570,6 +570,26 @@ body {
 .rsum-tag.logs { background: rgba(122, 208, 168, 0.14); color: var(--accent-2); }
 .rsum-tag.manual { background: rgba(151, 178, 196, 0.12); color: var(--text-3); }
 .rsum-note { margin-top: 12px; font-size: 11px; color: var(--text-3); }
+
+/* --- Crossplots tab --- */
+.xplot { display: flex; flex-direction: column; height: 100%; }
+.xplot-bar { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--hairline); }
+.xplot-plot { flex: 1; position: relative; min-height: 0; }
+.xplot-canvas { display: block; }
+.xp-mode, .xp-scope { width: auto; margin-bottom: 0; }
+.xp-mode .vol-src-btn, .xp-scope .vol-src-btn { padding: 6px 12px; }
+.xp-sel { display: flex; flex-direction: column; gap: 3px; }
+.xp-sel > span { font-size: 10px; font-family: var(--mono); color: var(--text-3); }
+.xp-sel select {
+  background: var(--canvas); border: 1px solid var(--border); border-radius: var(--r-sm);
+  color: var(--text); font: 13px var(--sans, system-ui); padding: 5px 8px; cursor: pointer; min-width: 78px;
+}
+.xp-sel select:focus { outline: none; border-color: var(--accent); }
+.xp-logs { display: flex; gap: 10px; align-items: center; padding-bottom: 5px; }
+.xp-logs label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.xp-logs input { accent-color: var(--accent); }
+.xp-zone { display: flex; align-items: flex-end; gap: 6px; }
+.xp-zone > span { font-size: 10px; font-family: var(--mono); color: var(--text-3); padding-bottom: 6px; }
 .vol-in { display: flex; flex-direction: column; gap: 3px; }
 .vol-in span { font-size: 10px; font-family: var(--mono); color: var(--text-3); text-align: center; }
 .vol-in input {

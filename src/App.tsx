@@ -14,17 +14,19 @@ import { Dashboard } from './components/Dashboard';
 import { WellMap } from './components/WellMap';
 import { WellTie } from './components/WellTie';
 import { ReservesSummary } from './components/ReservesSummary';
+import { CrossplotView } from './components/CrossplotView';
 import {
   bootstrap, persist, createProject, renameProject, switchProject, deleteProject,
 } from './persistence';
 import { SAMPLE_LAS } from './sampleData';
 
-type TabKey = 'map' | 'correlation' | 'tie' | 'reserves' | 'dashboard';
+type TabKey = 'map' | 'correlation' | 'tie' | 'crossplot' | 'reserves' | 'dashboard';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'map', label: 'Карта' },
   { key: 'correlation', label: 'Корр. схема' },
   { key: 'tie', label: 'Привязка' },
+  { key: 'crossplot', label: 'Кроссплоты' },
   { key: 'reserves', label: 'Запасы' },
   { key: 'dashboard', label: 'Дашборд' },
 ];
@@ -250,6 +252,8 @@ export default function App() {
           <WellMap wells={wells} markers={markers} activeWellId={activeWellId} onActivate={setActiveWell} />
         ) : tab === 'reserves' ? (
           <ReservesSummary wells={wells} markers={markers} />
+        ) : tab === 'crossplot' ? (
+          <CrossplotView wells={wells} markers={markers} activeWellId={activeWellId} />
         ) : tab === 'tie' ? (
           <WellTie
             wells={wells}
