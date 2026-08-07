@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildSyntheticSection } from './section';
 import { buildFieldSection } from './field';
-import { autoTrackHorizon, horizonControls, sampleNodes, interpolateHorizon, tieToWells } from './horizon';
+import { autoTrackHorizon, horizonControls, sampleNodes, interpolateHorizon, tieToWells, sampleHorizonAt } from './horizon';
 import { buildSurface } from '../core/framework';
 import { twtToDepth, DEFAULT_VELOCITY } from '../core/velocity';
 import type { Well, Marker } from '../types';
@@ -45,9 +45,24 @@ describe('editable nodes', () => {
   });
 });
 
+describe('sampleHorizonAt', () => {
+  it('linearly interpolates between the two surrounding traces', () => {
+    const h = new Float64Array([100, 200, 300, 400]);
+    expect(sampleHorizonAt(h, 1.5)).toBeCloseTo(250, 6);
+    expect(sampleHorizonAt(h, 0)).toBe(100);
+    expect(sampleHorizonAt(h, 3)).toBe(400);
+  });
+
+  it('clamps a fractional index outside the array', () => {
+    const h = new Float64Array([100, 200]);
+    expect(sampleHorizonAt(h, -5)).toBe(100);
+    expect(sampleHorizonAt(h, 50)).toBe(200);
+  });
+});
+
 describe('tieToWells', () => {
   it('overwrites a node at a well trace with the exact well tie', () => {
-    const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
+    const field = buildFieldSection(wells, markers, 'x', DEFAULT_VELOCITY)!;
     const nTraces = field.section.nTraces;
     const wrong = sampleNodes(new Float64Array(nTraces).fill(1234), 5); // deliberately off
     const tied = tieToWells(field, 'Top A', wrong);
@@ -57,7 +72,7 @@ describe('tieToWells', () => {
   });
 
   it('inserts a node when no existing node sits on the well trace', () => {
-    const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
+    const field = buildFieldSection(wells, markers, 'x', DEFAULT_VELOCITY)!;
     const nTraces = field.section.nTraces;
     const nodes = [{ i: 40, twt: 1500 }, { i: 220, twt: 1600 }]; // neither at 0 or nTraces-1
     const tied = tieToWells(field, 'Top A', nodes);
@@ -66,7 +81,7 @@ describe('tieToWells', () => {
   });
 
   it('is a no-op for a label with no well ties', () => {
-    const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
+    const field = buildFieldSection(wells, markers, 'x', DEFAULT_VELOCITY)!;
     const nodes = sampleNodes(new Float64Array(field.section.nTraces).fill(1000), 5);
     expect(tieToWells(field, 'Nonexistent', nodes)).toEqual(nodes);
   });
@@ -74,7 +89,7 @@ describe('tieToWells', () => {
 
 describe('horizonControls → buildSurface (seismic feeds the framework)', () => {
   it('converts a horizon to depth control points along the line', () => {
-    const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
+    const field = buildFieldSection(wells, markers, 'x', DEFAULT_VELOCITY)!;
     const h = new Float64Array(field.section.nTraces).fill(1800);
     const controls = horizonControls(field, h, DEFAULT_VELOCITY);
     expect(controls).toHaveLength(field.section.nTraces);
@@ -84,7 +99,7 @@ describe('horizonControls → buildSurface (seismic feeds the framework)', () =>
   });
 
   it('the horizon control points build a surface via the shared service', () => {
-    const field = buildFieldSection(wells, markers, DEFAULT_VELOCITY)!;
+    const field = buildFieldSection(wells, markers, 'x', DEFAULT_VELOCITY)!;
     const controls = horizonControls(field, autoTrackHorizon(field.section, 1850), DEFAULT_VELOCITY);
     const xs = controls.map((c) => c.x), ys = controls.map((c) => c.y);
     const surface = buildSurface(controls, { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys), nx: 20, ny: 20 });

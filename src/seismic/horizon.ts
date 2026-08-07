@@ -68,12 +68,25 @@ export function tieToWells(field: FieldSection, label: string, nodes: HorizonNod
   for (const w of field.wells) {
     const top = w.tops.find((t) => t.label === label);
     if (!top) continue;
-    const i = Math.round(w.xFrac * (nTraces - 1));
+    const i = Math.round(w.f * (nTraces - 1));
     const k = out.findIndex((n) => n.i === i);
     if (k >= 0) out[k] = { i, twt: top.twt };
     else out.push({ i, twt: top.twt });
   }
   return out.sort((a, b) => a.i - b.i);
+}
+
+/**
+ * Linear-interpolated sample of a per-trace horizon at a FRACTIONAL trace index —
+ * for reading a value at a point that doesn't land exactly on a trace, such as
+ * where two lines cross.
+ */
+export function sampleHorizonAt(horizonTwt: Float64Array, fracIndex: number): number {
+  const n = horizonTwt.length;
+  const c = Math.max(0, Math.min(n - 1, fracIndex));
+  const lo = Math.floor(c), hi = Math.min(n - 1, lo + 1);
+  const t = c - lo;
+  return horizonTwt[lo] + (horizonTwt[hi] - horizonTwt[lo]) * t;
 }
 
 /**

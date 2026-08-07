@@ -10,11 +10,14 @@ import { depthToTwt, type VelocityModel } from '../core/velocity';
  */
 export const EARTH: VelocityModel = { kind: 'linear', v0: 1900, k: 0.38 };
 
+/** Which map axis a line is laid out along. */
+export type LineAxis = 'x' | 'y';
+
 export interface WellPost {
   id: string;
   name: string;
-  /** Position along the line, 0 (left) … 1 (right). */
-  xFrac: number;
+  /** Position along the line, 0 (first endpoint) … 1 (second). */
+  f: number;
   tops: { label: string; color: string; twt: number; depth: number }[];
 }
 
@@ -28,19 +31,23 @@ export interface FieldSection {
 }
 
 /**
- * A synthetic seismic line along the wells: reflectors trend with the mapped
- * tops (depth→TWT through the true earth), with filler reflectors for a realistic
+ * A synthetic seismic line laid out along `axis` (its two endpoints are the
+ * wells with the smallest and largest coordinate on that axis — 'x' gives a
+ * west→east line, 'y' a south→north one, so two axes make two independent
+ * crossing lines through the same field). Reflectors trend with the mapped tops
+ * (depth→TWT through the true earth), with filler reflectors for a realistic
  * look, and wells are posted with their tops as tie markers. This is the demo
  * bridge — a later stage picks the horizon and feeds it to buildSurface.
  */
-export function buildFieldSection(coordWells: Well[], markers: Marker[], earth: VelocityModel = EARTH): FieldSection | null {
+export function buildFieldSection(coordWells: Well[], markers: Marker[], axis: LineAxis = 'x', earth: VelocityModel = EARTH): FieldSection | null {
   const wells = coordWells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y));
   if (wells.length < 2) return null;
 
-  const xs = wells.map((w) => w.x!);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const span = Math.max(maxX - minX, 1);
-  const xFrac = (x: number) => (x - minX) / span;
+  const pos = (w: Well) => (axis === 'x' ? w.x! : w.y!);
+  const ps = wells.map(pos);
+  const minP = Math.min(...ps), maxP = Math.max(...ps);
+  const span = Math.max(maxP - minP, 1);
+  const f = (w: Well) => (pos(w) - minP) / span;
 
   const mappable = markers.filter((m) => wells.filter((w) => Number.isFinite(m.depths[w.id])).length >= 2);
 
@@ -50,7 +57,7 @@ export function buildFieldSection(coordWells: Well[], markers: Marker[], earth: 
   for (const m of mappable) {
     const pts = wells
       .filter((w) => Number.isFinite(m.depths[w.id]))
-      .map((w) => ({ f: xFrac(w.x!), t: depthToTwt(earth, m.depths[w.id]) }))
+      .map((w) => ({ f: f(w), t: depthToTwt(earth, m.depths[w.id]) }))
       .sort((a, b) => a.f - b.f);
     const first = pts[0], last = pts[pts.length - 1];
     const slope = last.f > first.f ? (last.t - first.t) / (last.f - first.f) : 0;
@@ -78,14 +85,14 @@ export function buildFieldSection(coordWells: Well[], markers: Marker[], earth: 
   const posts: WellPost[] = wells.map((w) => ({
     id: w.id,
     name: w.name,
-    xFrac: xFrac(w.x!),
+    f: f(w),
     tops: mappable
       .filter((m) => Number.isFinite(m.depths[w.id]))
       .map((m) => ({ label: m.label, color: m.color, twt: depthToTwt(earth, m.depths[w.id]), depth: m.depths[w.id] })),
   }));
 
-  const p0w = wells.reduce((a, b) => (a.x! <= b.x! ? a : b));
-  const p1w = wells.reduce((a, b) => (a.x! >= b.x! ? a : b));
+  const p0w = wells.reduce((a, b) => (pos(a) <= pos(b) ? a : b));
+  const p1w = wells.reduce((a, b) => (pos(a) >= pos(b) ? a : b));
   const line = { p0: { x: p0w.x!, y: p0w.y! }, p1: { x: p1w.x!, y: p1w.y! } };
 
   return { section, earth, wells: posts, line };

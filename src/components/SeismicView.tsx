@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { Marker, Well } from '../types';
 import {
   buildFieldSection, autoTrackHorizon, horizonControls,
-  sampleNodes, interpolateHorizon, tieToWells, type HorizonNode,
+  sampleNodes, interpolateHorizon, tieToWells, sampleHorizonAt, type HorizonNode, type FieldSection,
 } from '../seismic';
 import { buildSurface } from '../core/framework';
+import { segmentIntersection } from '../core/geom/intersect';
 import {
   twtToDepth, velocityAt, calibrateVelocity, DEFAULT_VELOCITY, COMPACTION,
   type VelocityModel, type VelocitySample,
@@ -15,6 +16,14 @@ interface Props {
   wells: Well[];
   markers: Marker[];
 }
+
+type LineId = 'A' | 'B';
+interface EditState { label: string; color: string; nodes: HorizonNode[] }
+
+const LINES: { id: LineId; label: string; axis: 'x' | 'y' }[] = [
+  { id: 'A', label: 'W → E', axis: 'x' },
+  { id: 'B', label: 'S → N', axis: 'y' },
+];
 
 type ConvKey = 'const' | 'linear' | 'cal';
 const NODE_COUNT = 14; // editable nodes along the horizon
@@ -29,18 +38,27 @@ function seismicColor(v: number): [number, number, number] {
   return v >= 0 ? [30 + 225 * a, 34 + 36 * a, 34] : [30, 44 + 120 * a, 44 + 211 * a];
 }
 
-/** 2D seismic section with tie-posted wells and an editable, draggable horizon. */
+/**
+ * 2D seismic: two independent lines (W→E and S→N) through the same wells, each
+ * with its own editable horizon pick. Where the lines physically cross, a picked
+ * horizon common to both can be checked for mistie — the loop-tie QC step real
+ * interpretation uses to catch a bad pick before it reaches the structure map.
+ */
 export function SeismicView({ wells, markers }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragRef = useRef<number | null>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
-  const [edit, setEdit] = useState<{ label: string; color: string; nodes: HorizonNode[] } | null>(null);
+  const [lineId, setLineId] = useState<LineId>('A');
+  const [edits, setEdits] = useState<Record<LineId, EditState | null>>({ A: null, B: null });
   const [convKey, setConvKey] = useState<ConvKey>('const');
   const [calModel, setCalModel] = useState<VelocityModel | null>(null);
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   const setSeismicHorizon = useStore((s) => s.setSeismicHorizon);
   const clearSeismicHorizon = useStore((s) => s.clearSeismicHorizon);
+
+  const edit = edits[lineId];
+  const setEdit = (e: EditState | null) => setEdits((prev) => ({ ...prev, [lineId]: e }));
 
   // The conversion velocity applied to picked times (independent of the earth truth
   // the section was built with). Switching it re-converts live — it does NOT rebuild
@@ -50,7 +68,13 @@ export function SeismicView({ wells, markers }: Props) {
     [convKey, calModel],
   );
   const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
-  const field = useMemo(() => buildFieldSection(coordWells, markers), [coordWells, markers]);
+  // Both lines are built together (geometry is cheap) so they can be tied at their
+  // crossing point regardless of which one is on screen; only the active line's
+  // raster gets rendered.
+  const fieldA = useMemo(() => buildFieldSection(coordWells, markers, 'x'), [coordWells, markers]);
+  const fieldB = useMemo(() => buildFieldSection(coordWells, markers, 'y'), [coordWells, markers]);
+  const fields = useMemo<Record<LineId, FieldSection | null>>(() => ({ A: fieldA, B: fieldB }), [fieldA, fieldB]);
+  const field = fields[lineId];
 
   const horizonList = useMemo(() => {
     if (!field) return [];
@@ -62,7 +86,9 @@ export function SeismicView({ wells, markers }: Props) {
     return [...by.entries()].map(([label, e]) => ({ label, color: e.color, seedTwt: e.sum / e.n }));
   }, [field]);
 
-  useEffect(() => { setEdit(null); }, [field]); // drop a stale pick when the field changes
+  // Drop stale picks on both lines when the underlying wells/markers change —
+  // switching which line is on screen must NOT clear the other line's work.
+  useEffect(() => { setEdits({ A: null, B: null }); }, [coordWells, markers]);
 
   // Plot geometry — shared by the draw effect and the pointer handlers.
   const geom = useMemo(() => {
@@ -98,7 +124,7 @@ export function SeismicView({ wells, markers }: Props) {
     for (const w of field.wells) {
       const top = w.tops.find((t) => t.label === edit.label);
       if (!top) continue;
-      const i = Math.round(w.xFrac * (field.section.nTraces - 1));
+      const i = Math.round(w.f * (field.section.nTraces - 1));
       maxMiss = Math.max(maxMiss, Math.abs(twtToDepth(conv, horizonTwt[i]) - top.depth));
     }
     return {
@@ -127,13 +153,38 @@ export function SeismicView({ wells, markers }: Props) {
     return max;
   }, [field, conv]);
 
+  // Where the two lines physically cross, and — if the same horizon is picked on
+  // both — the loop-tie mistie between them there. This is what makes a second
+  // line worth having: an independent check on the first line's pick.
+  const crossing = useMemo(() => {
+    if (!fieldA || !fieldB) return null;
+    const hit = segmentIntersection(fieldA.line.p0, fieldA.line.p1, fieldB.line.p0, fieldB.line.p1);
+    if (!hit) return null;
+    const editA = edits.A, editB = edits.B;
+    if (!editA || !editB || editA.label !== editB.label) return { hit, tie: null };
+    const twtA = interpolateHorizon(editA.nodes, fieldA.section.nTraces);
+    const twtB = interpolateHorizon(editB.nodes, fieldB.section.nTraces);
+    const zA = twtToDepth(conv, sampleHorizonAt(twtA, hit.fa * (fieldA.section.nTraces - 1)));
+    const zB = twtToDepth(conv, sampleHorizonAt(twtB, hit.fb * (fieldB.section.nTraces - 1)));
+    return { hit, tie: { label: editA.label, zA, zB, mistie: Math.abs(zA - zB) } };
+  }, [fieldA, fieldB, edits, conv]);
+
+  // Nudge to pick the same horizon on the other line once one side is picked and
+  // the lines do cross — otherwise there's nothing to compare at the crossing.
+  const crossHint = useMemo(() => {
+    if (!edit || !crossing?.hit) return null;
+    const other: LineId = lineId === 'A' ? 'B' : 'A';
+    if (edits[other]?.label === edit.label) return null; // already comparable — shown as the tie row instead
+    return `Снимите «${edit.label}» и на линии ${LINES.find((l) => l.id === other)!.label}, чтобы сверить на пересечении.`;
+  }, [edit, crossing, lineId, edits]);
+
   const snap = (label: string, color: string, seedTwt: number) => {
     if (!field) return;
     setEdit({ label, color, nodes: sampleNodes(autoTrackHorizon(field.section, seedTwt), NODE_COUNT) });
   };
 
-  // Fit v0/k so the wells' picked times convert to their known depths, and — if a
-  // horizon is being edited — pull it exactly onto the well ties too. Calibration
+  // Fit v0/k so the wells' picked times convert to their known depths, and pull
+  // any active pick(s) — on either line — exactly onto the well ties. Calibration
   // alone can't close the gap at a well: the demo reflector is a straight line
   // through the two OUTER wells, so an inner well's true top needn't sit on it.
   // Tying is the standard next interpretation step once you trust the wells.
@@ -142,7 +193,14 @@ export function SeismicView({ wells, markers }: Props) {
     const samples: VelocitySample[] = field.wells.flatMap((w) => w.tops.map((t) => ({ depth: t.depth, twt: t.twt })));
     setCalModel(calibrateVelocity(samples));
     setConvKey('cal');
-    if (edit) setEdit({ ...edit, nodes: tieToWells(field, edit.label, edit.nodes) });
+    setEdits((prev) => {
+      const next = { ...prev };
+      for (const id of ['A', 'B'] as LineId[]) {
+        const f = fields[id], e = prev[id];
+        if (f && e) next[id] = { ...e, nodes: tieToWells(f, e.label, e.nodes) };
+      }
+      return next;
+    });
   };
 
   // --- Node drag editing ---
@@ -244,7 +302,7 @@ export function SeismicView({ wells, markers }: Props) {
 
     // Wells + tie markers.
     for (const w of field.wells) {
-      const x = xOf(w.xFrac);
+      const x = xOf(w.f);
       ctx.strokeStyle = 'rgba(244,247,250,0.6)'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, T + ph); ctx.stroke();
       ctx.fillStyle = text; ctx.textAlign = 'center'; ctx.fillText(w.name, x, T - 8);
@@ -255,6 +313,19 @@ export function SeismicView({ wells, markers }: Props) {
         ctx.beginPath(); ctx.moveTo(x - 9, y); ctx.lineTo(x + 9, y); ctx.stroke();
         ctx.fillStyle = top.color; ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
       }
+    }
+
+    // Where the other line crosses this one — a small tick on the time axis.
+    if (crossing?.hit) {
+      const fx = lineId === 'A' ? crossing.hit.fa : crossing.hit.fb;
+      const x = xOf(fx);
+      const accent2 = v('--accent-2', '#34d1a8');
+      ctx.strokeStyle = accent2;
+      ctx.setLineDash([3, 3]); ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, T + ph); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = accent2; ctx.textAlign = 'center';
+      ctx.fillText('×', x, T + ph + 14);
     }
 
     // Editable horizon: interpolated line + draggable node handles.
@@ -279,7 +350,7 @@ export function SeismicView({ wells, markers }: Props) {
     for (let i = 0; i < lw; i++) { const [r, g, b] = seismicColor((i / lw) * 2 - 1); ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(lx + i, ly, 1, lh); }
     ctx.strokeStyle = border; ctx.strokeRect(lx, ly, lw, lh);
     ctx.fillStyle = text3; ctx.textAlign = 'center'; ctx.fillText('амплитуда −/+', lx + lw / 2, ly - 5);
-  }, [field, image, size, geom, edit, horizonTwt]);
+  }, [field, image, size, geom, edit, horizonTwt, crossing, lineId]);
 
   if (wells.length === 0) {
     return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Загрузите скважины — здесь появится синтетический сейсмо-разрез вдоль линии скважин с привязкой кровель.</p></div></div>;
@@ -288,41 +359,60 @@ export function SeismicView({ wells, markers }: Props) {
     return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Нужны ≥2 скважины с координатами, чтобы построить линию разреза.</p></div></div>;
   }
 
-  const inMap = edit ? !!seismicHorizons[edit.label] : false;
+  const inMap = edit ? !!seismicHorizons[edit.label]?.[lineId] : false;
 
   return (
     <div className="seismic" ref={wrapRef}>
       <canvas ref={canvasRef} className="seismic-canvas" style={{ width: size.w, height: size.h }}
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} />
 
-      {horizonList.length > 0 && (
-        <div className="seismic-panel">
-          <div className="seismic-panel-h">Снять горизонт</div>
-          <div className="seismic-picks">
-            {horizonList.map((h) => (
-              <button key={h.label} className={`seismic-pick ${edit?.label === h.label ? 'on' : ''}`}
-                onClick={() => snap(h.label, h.color, h.seedTwt)}>
-                <span className="seismic-dot" style={{ background: h.color }} />{h.label}
-              </button>
-            ))}
-          </div>
-          {edit && <div className="seismic-hint">Перетащите узлы, чтобы поправить горизонт.</div>}
+      <div className="seismic-panel">
+        <div className="seismic-panel-h">Линия</div>
+        <div className="seismic-picks">
+          {LINES.map((l) => (
+            <button key={l.id} className={`seismic-pick ${lineId === l.id ? 'on' : ''}`} onClick={() => setLineId(l.id)}>
+              {edits[l.id] && <span className="seismic-dot" style={{ background: edits[l.id]!.color }} />}
+              {l.label}
+            </button>
+          ))}
         </div>
-      )}
+
+        {horizonList.length > 0 && (
+          <>
+            <div className="seismic-panel-h seismic-panel-h2">Снять горизонт</div>
+            <div className="seismic-picks">
+              {horizonList.map((h) => (
+                <button key={h.label} className={`seismic-pick ${edit?.label === h.label ? 'on' : ''}`}
+                  onClick={() => snap(h.label, h.color, h.seedTwt)}>
+                  <span className="seismic-dot" style={{ background: h.color }} />{h.label}
+                </button>
+              ))}
+            </div>
+            {edit && <div className="seismic-hint">Перетащите узлы, чтобы поправить горизонт.</div>}
+            {crossHint && <div className="seismic-hint">{crossHint}</div>}
+          </>
+        )}
+      </div>
 
       {pick && edit && (
         <aside className="seismic-result">
-          <div className="seismic-result-h"><span className="seismic-dot" style={{ background: edit.color }} />Горизонт {edit.label}</div>
+          <div className="seismic-result-h"><span className="seismic-dot" style={{ background: edit.color }} />Горизонт {edit.label} · {LINES.find((l) => l.id === lineId)!.label}</div>
           <div className="seismic-row"><span>Узлов</span><b>{edit.nodes.length}</b></div>
           <div className="seismic-row"><span>TWT</span><b>{Math.round(pick.twtMin)}–{Math.round(pick.twtMax)} мс</b></div>
           <div className="seismic-row"><span>Глубина</span><b>{Math.round(pick.zMin)}–{Math.round(pick.zMax)} м</b></div>
           <div className="seismic-row"><span>→ buildSurface</span><b>{pick.nx}×{pick.ny}</b></div>
           <div className="seismic-row strong"><span>Согласие со скв.</span><b>±{pick.maxMiss.toFixed(1)} м</b></div>
+          {crossing?.tie && crossing.tie.label === edit.label && (
+            <div className="seismic-row strong">
+              <span title="Разница глубин той же кровли на пересечении двух линий">Пересеч. линий</span>
+              <b>±{crossing.tie.mistie.toFixed(1)} м</b>
+            </div>
+          )}
           <div className="seismic-note">Горизонт → контрольные точки → каркас (тот же <code>buildSurface</code>, что и для скважин).</div>
-          <button className="seismic-apply" onClick={() => setSeismicHorizon(edit.label, pick.controls)}>
+          <button className="seismic-apply" onClick={() => setSeismicHorizon(edit.label, lineId, pick.controls)}>
             {inMap ? 'Обновить в карте' : 'Использовать в карте'}
           </button>
-          {inMap && <button className="seismic-remove" onClick={() => clearSeismicHorizon(edit.label)}>убрать из карты</button>}
+          {inMap && <button className="seismic-remove" onClick={() => clearSeismicHorizon(edit.label, lineId)}>убрать из карты</button>}
         </aside>
       )}
 
@@ -331,12 +421,12 @@ export function SeismicView({ wells, markers }: Props) {
         <button className={`seismic-vel-btn ${convKey === 'const' ? 'on' : ''}`} onClick={() => setConvKey('const')}>Постоянная</button>
         <button className={`seismic-vel-btn ${convKey === 'linear' ? 'on' : ''}`} onClick={() => setConvKey('linear')}>Компакция</button>
         <button className={`seismic-vel-btn cal ${convKey === 'cal' ? 'on' : ''}`} onClick={calibrate}
-          title="Подбирает V₀/k по кровлям и, если горизонт снят, притягивает его узлы точно на скважины">Калибровать по скв.</button>
+          title="Подбирает V₀/k по кровлям и притягивает снятые горизонты точно на скважины (на обеих линиях)">Калибровать по скв.</button>
         {velTie != null && <span className={`seismic-vel-tie ${velTie < 8 ? 'ok' : ''}`} title="невязка v-модели по кровлям скважин">тай ±{Math.round(velTie)} м</span>}
       </div>
 
       <div className="seismic-badge">
-        Синтетический разрез · {field.section.nTraces} трасс · {conv.kind === 'const'
+        Линия {lineId} ({LINES.find((l) => l.id === lineId)!.label}) · {field.section.nTraces} трасс · {conv.kind === 'const'
           ? `v = ${conv.v} м/с`
           : `v = ${velInfo?.vTop}→${velInfo?.vBot} м/с`}
         {convKey === 'cal' && calModel && (
