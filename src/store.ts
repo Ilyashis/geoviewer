@@ -9,6 +9,7 @@ import type { SurveyRow } from './survey/csv';
 import { mapLithology, mapSaturation } from './lithology/map';
 import type { ProjectMeta } from './persistence';
 import type { SurveyStation } from './geo/deviation';
+import { buildDemoLas } from './sampleData';
 
 /** A deviated demo trajectory: vertical to a kickoff, build angle, then hold. */
 function demoSurvey(i: number): SurveyStation[] {
@@ -62,6 +63,8 @@ interface AppState {
   hiddenTracks: Record<string, string[]>;
   addLasFiles: (files: FileList | File[]) => Promise<void>;
   loadLasText: (text: string, fileName?: string) => void;
+  /** Replace the project with a ready demo field: several varied, partly-deviated wells + tops. */
+  loadDemoField: (count?: number) => void;
   setActiveWell: (id: string) => void;
   removeWell: (id: string) => void;
   addMarkerAtDepth: (depth: number) => void;
@@ -230,6 +233,11 @@ export const useStore = create<AppState>((set, get) => ({
     }),
 
   clearAll: () => set({ wells: [], markers: [], activeWellId: null, hiddenTracks: {}, selectedMarkerId: null, error: null }),
+
+  loadDemoField: (count = 6) => {
+    get().clearAll();
+    for (let i = 0; i < count; i++) get().loadLasText(buildDemoLas(i), `andromeda-demo-${i}.las`);
+  },
 
   importTops: (rows) => {
     const state = get();

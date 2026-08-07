@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Layers, Share2, FolderOpen, MessageSquare,
   MousePointer2, Square, PenLine, Milestone, Type, Table as TableIcon,
+  Navigation, Spline, Upload,
 } from 'lucide-react';
 import { useStore } from './store';
 import { WellLogPlate, wellDepthExtent } from './components/WellLogPlate';
@@ -18,7 +19,7 @@ import { CrossplotView } from './components/CrossplotView';
 import {
   bootstrap, persist, createProject, renameProject, switchProject, deleteProject,
 } from './persistence';
-import { SAMPLE_LAS } from './sampleData';
+import { buildDemoLas } from './sampleData';
 
 type TabKey = 'map' | 'correlation' | 'tie' | 'crossplot' | 'reserves' | 'dashboard';
 
@@ -48,6 +49,7 @@ export default function App() {
   const selectedMarkerId = useStore((s) => s.selectedMarkerId);
   const addLasFiles = useStore((s) => s.addLasFiles);
   const loadLasText = useStore((s) => s.loadLasText);
+  const loadDemoField = useStore((s) => s.loadDemoField);
   const removeWell = useStore((s) => s.removeWell);
   const setActiveWell = useStore((s) => s.setActiveWell);
   const addMarkerAtDepth = useStore((s) => s.addMarkerAtDepth);
@@ -222,7 +224,8 @@ export default function App() {
             <Milestone size={16} strokeWidth={1.75} />
           </button>
           <ExportMenu bodyRef={bodyRef} depthWindow={effectiveWindow} />
-          <button className="btn ghost sm" onClick={() => loadLasText(SAMPLE_LAS, 'ANDROMEDA-DEMO.las')}>
+          <button className="btn ghost sm" title="Добавить демо-скважину"
+            onClick={() => loadLasText(buildDemoLas(wells.length), 'andromeda-demo.las')}>
             Демо
           </button>
           {wells.length > 0 && (
@@ -266,10 +269,24 @@ export default function App() {
           />
         ) : wells.length === 0 ? (
           <div className="empty">
-            <div className="empty-card">
-              <div className="ei"><Layers size={40} strokeWidth={1.25} /></div>
-              <h2>Перетащите .las файлы сюда</h2>
-              <p>Или нажмите «Демо», чтобы увидеть корреляционную схему.</p>
+            <div className="welcome">
+              <div className="welcome-logo"><Layers size={34} strokeWidth={1.4} /></div>
+              <h2>GeoViewer</h2>
+              <p className="welcome-sub">Каротаж, корреляция, структурные карты и подсчёт запасов — прямо в браузере.</p>
+              <div className="welcome-cta">
+                <button className="btn primary" onClick={() => loadDemoField()}>
+                  <Layers size={16} strokeWidth={1.9} /> Открыть демо-месторождение
+                </button>
+                <button className="btn ghost" onClick={() => inputRef.current?.click()}>
+                  <Upload size={15} strokeWidth={1.75} /> Загрузить .las
+                </button>
+              </div>
+              <div className="welcome-feats">
+                <div className="welcome-feat"><Layers size={18} strokeWidth={1.6} /><b>Корреляция</b><span>разбивки, литология, привязка</span></div>
+                <div className="welcome-feat"><Navigation size={18} strokeWidth={1.6} /><b>Карты и запасы</b><span>структура, изохоры, STOOIP, P90/P50/P10</span></div>
+                <div className="welcome-feat"><Spline size={18} strokeWidth={1.6} /><b>Кроссплоты</b><span>φ–ρ, GR–R, гистограммы</span></div>
+              </div>
+              <p className="welcome-hint">Перетащите .las сюда · CSV разбивки / литология / инклинометрия — через импорт <Milestone size={12} strokeWidth={1.75} /></p>
             </div>
           </div>
         ) : (

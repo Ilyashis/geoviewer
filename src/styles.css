@@ -301,6 +301,27 @@ body {
 .empty-card h2 { margin: 0 0 8px; font-size: 20px; letter-spacing: -0.01em; }
 .empty-card p { margin: 0; color: var(--text-2); }
 
+/* --- Onboarding welcome --- */
+.welcome { max-width: 560px; text-align: center; padding: 24px; }
+.welcome-logo {
+  width: 60px; height: 60px; margin: 0 auto 16px; border-radius: 16px; display: grid; place-items: center;
+  color: var(--accent); background: rgba(58, 163, 201, 0.10); border: 1px solid var(--border);
+}
+.welcome h2 { margin: 0 0 8px; font-size: 26px; letter-spacing: -0.01em; }
+.welcome-sub { margin: 0 auto 22px; color: var(--text-2); font-size: 14px; line-height: 1.5; max-width: 400px; }
+.welcome-cta { display: flex; gap: 10px; justify-content: center; margin-bottom: 30px; flex-wrap: wrap; }
+.btn.primary { padding: 10px 18px; font-size: 14px; }
+.welcome-feats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 22px; }
+.welcome-feat {
+  display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 16px 12px;
+  border: 1px solid var(--hairline); border-radius: var(--r-md); background: var(--panel-2);
+}
+.welcome-feat svg { color: var(--accent); margin-bottom: 3px; }
+.welcome-feat b { font-size: 13px; font-weight: 600; }
+.welcome-feat span { font-size: 11px; color: var(--text-3); line-height: 1.35; }
+.welcome-hint { display: inline-flex; align-items: center; gap: 5px; justify-content: center; margin: 0; font-size: 12px; color: var(--text-3); flex-wrap: wrap; }
+@media (max-width: 560px) { .welcome-feats { grid-template-columns: 1fr; } }
+
 /* placeholder tabs (Карта / Привязка / Дашборд) */
 .placeholder { flex: 1; height: 100%; display: grid; place-items: center; color: var(--text-3); }
 .placeholder .pc { text-align: center; }
