@@ -10,5 +10,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // private-data/ holds real field files (gitignored). Diagnostics written
+    // against them must never join the committed suite — `npm test` has to pass
+    // on a clean checkout, where that folder doesn't exist.
+    exclude: ['**/node_modules/**', '**/dist/**', 'private-data/**'],
   },
 });

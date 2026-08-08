@@ -2,6 +2,7 @@ import type { StateCreator } from 'zustand';
 import type { LithoInterval, Well } from '../../types';
 import type { LithoRow } from '../../lithology/csv';
 import type { SurveyRow } from '../../survey/csv';
+import type { WellHeadRow } from '../../wells/heads';
 import type { SurveyStation } from '../../wells/deviation';
 import { parseLasToWell } from '../../las/parser';
 import { generateDemoLithology } from '../../plate/demoLithology';
@@ -23,6 +24,12 @@ export interface SurveyImportSummary {
   unmatchedWells: string[];
 }
 
+export interface HeadsImportSummary {
+  wells: number;
+  withKb: number;
+  unmatchedWells: string[];
+}
+
 export interface WellsSlice {
   wells: Well[];
   activeWellId: string | null;
@@ -38,6 +45,7 @@ export interface WellsSlice {
   toggleTrack: (wellId: string, key: string) => void;
   importLithology: (rows: LithoRow[]) => LithoImportSummary;
   importSurveys: (rows: SurveyRow[]) => SurveyImportSummary;
+  importWellHeads: (rows: WellHeadRow[]) => HeadsImportSummary;
 }
 
 export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, get) => ({
@@ -192,5 +200,35 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
 
     set({ wells });
     return { wells: perWell.size, stations, unmatchedWells: [...unmatched] };
+  },
+
+  /**
+   * Attach surface coordinates and KB from a well-heads table. Kept separate
+   * from the LAS import because real exporters (Petrel among them) leave X/Y/KB
+   * out of the LAS entirely — without this the whole field has no position and
+   * nothing spatial works.
+   */
+  importWellHeads: (rows) => {
+    const state = get();
+    const byName = wellIndex(state.wells);
+    const patch = new Map<string, WellHeadRow>();
+    const unmatched = new Set<string>();
+    for (const r of rows) {
+      const wellId = byName.get(norm(r.well));
+      if (!wellId) { unmatched.add(r.well); continue; }
+      patch.set(wellId, r);
+    }
+
+    let withKb = 0;
+    const wells = state.wells.map((w) => {
+      const r = patch.get(w.id);
+      if (!r) return w;
+      if (r.kb !== undefined) withKb++;
+      // Coordinates from a table are projected metres, never lon/lat degrees.
+      return { ...w, x: r.x, y: r.y, geodetic: false, kb: r.kb ?? w.kb };
+    });
+
+    set({ wells });
+    return { wells: patch.size, withKb, unmatchedWells: [...unmatched] };
   },
 });

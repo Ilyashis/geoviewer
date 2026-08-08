@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
-import { X, Upload, Milestone, Layers, Spline } from 'lucide-react';
+import { X, Upload, Milestone, Layers, Spline, MapPin } from 'lucide-react';
 import { useStore } from '../store';
 import { parseTopsCsv } from '../tops/csv';
 import { parseLithologyCsv } from '../lithology/csv';
 import { parseSurveyCsv } from '../survey/csv';
+import { parseWellHeadsCsv } from '../wells/heads';
 
-type Kind = 'tops' | 'litho' | 'survey';
+type Kind = 'tops' | 'litho' | 'survey' | 'heads';
 
 interface Props {
   onClose: () => void;
@@ -25,6 +26,10 @@ UT-1059,0,0,97
 UT-1059,1600,0,97
 UT-1059,2200,34,97
 UT-1059,3200,34,97`,
+  heads: `Well,X,Y,KB
+UT-1058,328818.61,3818409.01,7.6
+UT-1059,325777.75,3814139.67,21.5
+UT-1060,325983.30,3810249.18,28.9`,
 };
 
 export function ImportModal({ onClose }: Props) {
@@ -32,6 +37,7 @@ export function ImportModal({ onClose }: Props) {
   const importTops = useStore((s) => s.importTops);
   const importLithology = useStore((s) => s.importLithology);
   const importSurveys = useStore((s) => s.importSurveys);
+  const importWellHeads = useStore((s) => s.importWellHeads);
   const [kind, setKind] = useState<Kind>('tops');
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +61,12 @@ export function ImportModal({ onClose }: Props) {
         if (rows.length === 0) { setError('Нет валидных строк с интервалами.'); return; }
         const r = importLithology(rows);
         setSummary(`Импортировано: ${r.intervals} интервалов в ${r.wells} скважин.`);
+        if (r.unmatchedWells.length) setWarn(`Не найдены скважины: ${r.unmatchedWells.join(', ')}`);
+      } else if (kind === 'heads') {
+        const { rows } = parseWellHeadsCsv(text);
+        if (rows.length === 0) { setError('Нет валидных строк с устьями.'); return; }
+        const r = importWellHeads(rows);
+        setSummary(`Импортировано: координаты ${r.wells} скважин, альтитуда у ${r.withKb}.`);
         if (r.unmatchedWells.length) setWarn(`Не найдены скважины: ${r.unmatchedWells.join(', ')}`);
       } else {
         const { rows } = parseSurveyCsv(text);
@@ -86,6 +98,9 @@ export function ImportModal({ onClose }: Props) {
           <button className={`seg-btn ${kind === 'survey' ? 'on' : ''}`} onClick={() => { setKind('survey'); reset(); }}>
             <Spline size={14} strokeWidth={1.75} /> Инклинометрия
           </button>
+          <button className={`seg-btn ${kind === 'heads' ? 'on' : ''}`} onClick={() => { setKind('heads'); reset(); }}>
+            <MapPin size={14} strokeWidth={1.75} /> Устья
+          </button>
         </div>
 
         {wells.length === 0 ? (
@@ -99,10 +114,15 @@ export function ImportModal({ onClose }: Props) {
             Колонки <b>скважина</b>, <b>кровля</b>, <b>подошва</b>, <b>литотип</b>, опц. <b>насыщение</b>.
             Литология скважины заменяется целиком.
           </p>
-        ) : (
+        ) : kind === 'survey' ? (
           <p className="modal-hint">
             Колонки <b>скважина</b>, <b>MD</b>, <b>наклон</b> (зенит), <b>азимут</b> — град. Одна строка = станция;
             траектория и TVD считаются по минимальной кривизне.
+          </p>
+        ) : (
+          <p className="modal-hint">
+            Колонки <b>скважина</b>, <b>X</b>, <b>Y</b>, опц. <b>KB</b> (альтитуда). Нужны для карт: экспорт LAS
+            из Petrel координат и альтитуд не содержит, без них карты и запасы не строятся.
           </p>
         )}
 
