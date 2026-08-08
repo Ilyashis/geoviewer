@@ -3,6 +3,7 @@ import { Download } from 'lucide-react';
 import type { Marker, Well } from '../types';
 import { summarizeZones, buildSummaryCsv } from '../reserves/reservesSummary';
 import { DEFAULT_PETRO } from '../wells/petrophysics';
+import { metricWells } from '../wells/coords';
 import { downloadText } from '../export/download';
 
 interface Props {
@@ -20,7 +21,11 @@ export function ReservesSummary({ wells, markers }: Props) {
   const [bo, setBo] = useState(1.2);
   const [rf, setRf] = useState(0.3);
 
-  const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
+  // Metric frame first — zone areas/volumes below are computed in metres.
+  const coordWells = useMemo(
+    () => metricWells(wells).filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)),
+    [wells],
+  );
   const mappable = useMemo(() => {
     const ids = new Set(coordWells.map((w) => w.id));
     return markers.filter(

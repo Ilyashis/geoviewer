@@ -5,6 +5,7 @@ import {
   sampleNodes, interpolateHorizon, tieToWells, sampleHorizonAt, type HorizonNode, type FieldSection,
 } from '../seismic';
 import { buildSurface } from '../core/framework';
+import { metricWells } from '../wells/coords';
 import { segmentIntersection } from '../core/geom/intersect';
 import {
   twtToDepth, velocityAt, calibrateVelocity, DEFAULT_VELOCITY, COMPACTION,
@@ -67,7 +68,12 @@ export function SeismicView({ wells, markers }: Props) {
     () => (convKey === 'cal' && calModel ? calModel : CONV_PRESETS[convKey === 'cal' ? 'const' : convKey]),
     [convKey, calModel],
   );
-  const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
+  // Project lon/lat wells to metres — line geometry and depth conversion below
+  // are metric.
+  const coordWells = useMemo(
+    () => metricWells(wells).filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)),
+    [wells],
+  );
   // Both lines are built together (geometry is cheap) so they can be tied at their
   // crossing point regardless of which one is on screen; only the active line's
   // raster gets rendered.

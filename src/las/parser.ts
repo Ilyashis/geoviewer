@@ -177,7 +177,9 @@ export function parseLasToWell(text: string, fileName = 'well.las'): Well {
     parsed.well['WELL']?.value?.trim() ||
     fileName.replace(/\.las$/i, '');
 
-  // Surface coordinates from common ~Well mnemonics (X/Y or lon/lat fallback).
+  // Surface coordinates. Projected (metric) mnemonics are tried first and as a
+  // complete pair: a file carrying BOTH UTM and lat/lon must not end up with
+  // easting for x and latitude for y just because of header ordering.
   const pickCoord = (re: RegExp): number | undefined => {
     for (const [k, item] of Object.entries(parsed.well)) {
       if (!re.test(k)) continue;
@@ -186,8 +188,34 @@ export function parseLasToWell(text: string, fileName = 'well.las'): Well {
     }
     return undefined;
   };
-  const x = pickCoord(/^(x|xcoord|xwell|surfx|east|easting|x_utm|xutm|lon|long|slon)$/i);
-  const y = pickCoord(/^(y|ycoord|ywell|surfy|north|northing|y_utm|yutm|lat|slat)$/i);
+  const projX = pickCoord(/^(x|xcoord|xwell|surfx|east|easting|x_utm|xutm)$/i);
+  const projY = pickCoord(/^(y|ycoord|ywell|surfy|north|northing|y_utm|yutm)$/i);
+  const geoX = pickCoord(/^(lon|long|longi|slon)$/i);
+  const geoY = pickCoord(/^(lat|lati|slat)$/i);
+
+  const hasProjected = projX !== undefined && projY !== undefined;
+  const hasGeographic = geoX !== undefined && geoY !== undefined;
+  const x = hasProjected ? projX : hasGeographic ? geoX : undefined;
+  const y = hasProjected ? projY : hasGeographic ? geoY : undefined;
+  // Degrees, not metres — gridding/areas must project these before use, or a
+  // field's area comes out ~10^10 times off.
+  const geodetic = !hasProjected && hasGeographic ? true : undefined;
+
+  // Depth-reference elevation above sea level, so TVDSS = TVD − kb is a true
+  // subsea depth. Without it every "TVDSS" map is really TVD below each well's
+  // own rig floor — and on a field whose wells sit at different elevations that
+  // error is the same size as the structural relief being mapped.
+  // Ordered by how explicitly each mnemonic names the *logging* datum.
+  const KB_KEYS = ['EKB', 'KB', 'EDF', 'DFE', 'EREF', 'ELEV'];
+  let kb: number | undefined;
+  for (const key of KB_KEYS) {
+    const item = parsed.well[key];
+    if (!item) continue;
+    const n = Number(item.value);
+    if (!Number.isFinite(n)) continue;
+    kb = toMetres(n, lengthUnitOf(item.unit)); // elevations come in feet too
+    break;
+  }
 
   return {
     id: `well-${uid()}`,
@@ -195,6 +223,8 @@ export function parseLasToWell(text: string, fileName = 'well.las'): Well {
     uwi: parsed.well['UWI']?.value || parsed.well['API']?.value || undefined,
     x,
     y,
+    geodetic,
+    kb,
     depth,
     depthUnit: 'M', // normalised to metres on import (core/crs)
     curves,

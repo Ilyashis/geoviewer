@@ -150,3 +150,84 @@ ${data}`;
     expect(() => parseLasToWell(base(''))).toThrow(/нет строк данных/);
   });
 });
+
+describe('surface coordinates', () => {
+  const withWell = (wellLines: string) => `~V
+ VERS. 2.0 :
+ WRAP. NO :
+~W
+ NULL. -999.25 :
+ WELL. RW :
+${wellLines}
+~C
+ DEPT.M :
+ GR.GAPI :
+~A
+1670 75`;
+
+  it('takes projected coordinates as metres', () => {
+    const w = parseLasToWell(withWell(' XCOORD.M 512340 :\n YCOORD.M 6194500 :'));
+    expect([w.x, w.y]).toEqual([512340, 6194500]);
+    expect(w.geodetic).toBeUndefined();
+  });
+
+  it('falls back to lon/lat and flags them as degrees', () => {
+    const w = parseLasToWell(withWell(' LONG.DEG 60.25 :\n LATI.DEG 55.75 :'));
+    expect([w.x, w.y]).toEqual([60.25, 55.75]);
+    expect(w.geodetic).toBe(true);
+  });
+
+  it('prefers projected over geographic when the file carries both', () => {
+    // Geographic listed FIRST — header order must not decide which pair wins,
+    // and the two must never be mixed (easting with latitude).
+    const w = parseLasToWell(withWell(' LONG.DEG 60.25 :\n LATI.DEG 55.75 :\n XCOORD.M 512340 :\n YCOORD.M 6194500 :'));
+    expect([w.x, w.y]).toEqual([512340, 6194500]);
+    expect(w.geodetic).toBeUndefined();
+  });
+
+  it('ignores a half-present projected pair rather than mixing frames', () => {
+    const w = parseLasToWell(withWell(' XCOORD.M 512340 :\n LONG.DEG 60.25 :\n LATI.DEG 55.75 :'));
+    expect([w.x, w.y]).toEqual([60.25, 55.75]); // complete geographic pair, not X + latitude
+    expect(w.geodetic).toBe(true);
+  });
+});
+
+describe('KB / depth-reference elevation', () => {
+  const withWellSection = (wellLines: string) => `~V
+ VERS. 2.0 :
+ WRAP. NO :
+~W
+ NULL. -999.25 :
+ WELL. RW :
+${wellLines}
+~C
+ DEPT.M :
+ GR.GAPI :
+~A
+1670 75`;
+
+  it('reads EKB as the depth reference', () => {
+    expect(parseLasToWell(withWellSection(' EKB.M 142.5 : Elevation KB')).kb).toBeCloseTo(142.5, 6);
+  });
+
+  it('converts a KB given in feet to metres', () => {
+    expect(parseLasToWell(withWellSection(' EKB.FT 100 : Elevation KB')).kb).toBeCloseTo(30.48, 6);
+  });
+
+  it('prefers the explicit KB mnemonic over a generic elevation', () => {
+    const well = parseLasToWell(withWellSection(' ELEV.M 90 :\n EKB.M 142.5 :'));
+    expect(well.kb).toBeCloseTo(142.5, 6); // EKB names the logging datum, ELEV doesn't
+  });
+
+  it('falls back to ELEV when no drilling-reference mnemonic is present', () => {
+    expect(parseLasToWell(withWellSection(' ELEV.M 90 :')).kb).toBeCloseTo(90, 6);
+  });
+
+  it('leaves kb undefined when the header has no elevation (TVDSS falls back to TVD)', () => {
+    expect(parseLasToWell(withWellSection(' UWI. 100/DEMO :')).kb).toBeUndefined();
+  });
+
+  it('ignores a non-numeric elevation instead of yielding NaN depths', () => {
+    expect(parseLasToWell(withWellSection(' EKB.M UNKNOWN :')).kb).toBeUndefined();
+  });
+});

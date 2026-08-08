@@ -8,6 +8,7 @@ import { buildSurface, type ControlPoint } from '../core/framework';
 import { tvdss } from '../core/crs';
 import { useStore } from '../store';
 import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../wells/deviation';
+import { metricWells } from '../wells/coords';
 import { marchingSquares } from '../core/geom/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../reserves/volumetrics';
 import { aggregateZone, DEFAULT_PETRO, type PetroParams } from '../wells/petrophysics';
@@ -77,14 +78,17 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const [uncOn, setUncOn] = useState(false);
   const [spread, setSpread] = useState(20);
 
-  const coordWells = useMemo(() => wells.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [wells]);
+  // Project any lon/lat wells to metres first — everything below (gridding,
+  // areas, volumes, distances) assumes a metric frame.
+  const metric = useMemo(() => metricWells(wells), [wells]);
+  const coordWells = useMemo(() => metric.filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)), [metric]);
   const schematic = wells.length > 0 && coordWells.length < wells.length;
 
   const { positions } = useMemo(() => {
-    if (!schematic) return { positions: wells.map((w) => ({ id: w.id, name: w.name, x: w.x!, y: w.y! })) };
-    const pos: Pos[] = wells.map((w, i) => ({ id: w.id, name: w.name, x: i * 100, y: ((i * 53) % 44) - 22 }));
+    if (!schematic) return { positions: metric.map((w) => ({ id: w.id, name: w.name, x: w.x!, y: w.y! })) };
+    const pos: Pos[] = metric.map((w, i) => ({ id: w.id, name: w.name, x: i * 100, y: ((i * 53) % 44) - 22 }));
     return { positions: pos };
-  }, [wells, schematic]);
+  }, [metric, schematic]);
 
   // Markers mappable as a surface: ≥3 wells with coords and a pick.
   const mappable = useMemo(() => {

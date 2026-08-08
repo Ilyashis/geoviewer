@@ -50,6 +50,12 @@ export interface Well {
   /** Surface location; optional until we import headers/coordinates. */
   x?: number;
   y?: number;
+  /**
+   * True when x/y are longitude/latitude in DEGREES rather than projected
+   * metres — gridding, areas and distances must project them first
+   * (see `wells/coords`).
+   */
+  geodetic?: boolean;
   /** Deviation survey; absent ⇒ the well is treated as vertical (MD = TVD). */
   survey?: SurveyStation[];
   /** Depth-reference (KB) elevation above sea level; TVDSS = TVD − kb. */
