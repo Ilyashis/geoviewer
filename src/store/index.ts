@@ -7,7 +7,7 @@ import type { Store } from './types';
 
 export type { Store } from './types';
 export type { ImportSummary } from './slices/markers';
-export type { LithoImportSummary, SurveyImportSummary, HeadsImportSummary } from './slices/wells';
+export type { LithoImportSummary, SurveyImportSummary, HeadsImportSummary, DevImportSummary } from './slices/wells';
 
 /** God-store split into domain slices (wells · markers · project). Slices share
  *  one set/get, so cross-slice calls (loadDemoField → clearAll) still work. */

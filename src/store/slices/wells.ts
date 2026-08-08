@@ -3,6 +3,7 @@ import type { LithoInterval, Well } from '../../types';
 import type { LithoRow } from '../../lithology/csv';
 import type { SurveyRow } from '../../survey/csv';
 import type { WellHeadRow } from '../../wells/heads';
+import { parseDev, type ParsedDev } from '../../wells/dev';
 import type { SurveyStation } from '../../wells/deviation';
 import { parseLasToWell } from '../../las/parser';
 import { generateDemoLithology } from '../../plate/demoLithology';
@@ -30,6 +31,13 @@ export interface HeadsImportSummary {
   unmatchedWells: string[];
 }
 
+export interface DevImportSummary {
+  wells: number;
+  withKb: number;
+  deviated: number;
+  unmatchedWells: string[];
+}
+
 export interface WellsSlice {
   wells: Well[];
   activeWellId: string | null;
@@ -46,6 +54,7 @@ export interface WellsSlice {
   importLithology: (rows: LithoRow[]) => LithoImportSummary;
   importSurveys: (rows: SurveyRow[]) => SurveyImportSummary;
   importWellHeads: (rows: WellHeadRow[]) => HeadsImportSummary;
+  importDevTraces: (traces: ParsedDev[]) => DevImportSummary;
 }
 
 export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, get) => ({
@@ -54,15 +63,34 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
   error: null,
   hiddenTracks: {},
 
+  /**
+   * Accepts a mixed drop of well files. `.dev` (Petrel well trace) is applied
+   * after the LAS files regardless of drop order — it patches existing wells
+   * with their head coordinates, so the wells have to exist first.
+   */
   addLasFiles: async (files) => {
-    for (const file of Array.from(files)) {
+    const all = Array.from(files);
+    const isDev = (f: File) => /\.dev$/i.test(f.name);
+
+    for (const file of all.filter((f) => !isDev(f))) {
       try {
-        const text = await file.text();
-        get().loadLasText(text, file.name);
+        get().loadLasText(await file.text(), file.name);
       } catch (e) {
         set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` });
       }
     }
+
+    const devs = all.filter(isDev);
+    if (devs.length === 0) return;
+    const parsed: ParsedDev[] = [];
+    for (const file of devs) {
+      try {
+        parsed.push(parseDev(await file.text(), file.name));
+      } catch (e) {
+        set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` });
+      }
+    }
+    get().importDevTraces(parsed);
   },
 
   loadLasText: (text, fileName) => {
@@ -230,5 +258,42 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
 
     set({ wells });
     return { wells: patch.size, withKb, unmatchedWells: [...unmatched] };
+  },
+
+  /**
+   * Apply Petrel well traces: head coordinates + KB from the comment header,
+   * and the trajectory when the trace actually leaves vertical. A vertical stub
+   * carries no trajectory information, so it must not overwrite a real survey
+   * that was imported from elsewhere.
+   */
+  importDevTraces: (traces) => {
+    const state = get();
+    const byName = wellIndex(state.wells);
+    const patch = new Map<string, ParsedDev>();
+    const unmatched = new Set<string>();
+    for (const d of traces) {
+      const wellId = byName.get(norm(d.well));
+      if (!wellId) { unmatched.add(d.well); continue; }
+      patch.set(wellId, d);
+    }
+
+    let withKb = 0, deviated = 0;
+    const wells = state.wells.map((w) => {
+      const d = patch.get(w.id);
+      if (!d) return w;
+      if (d.kb !== undefined) withKb++;
+      if (d.deviated) deviated++;
+      return {
+        ...w,
+        x: d.x ?? w.x,
+        y: d.y ?? w.y,
+        geodetic: d.x !== undefined ? false : w.geodetic,
+        kb: d.kb ?? w.kb,
+        survey: d.survey.length ? d.survey : w.survey,
+      };
+    });
+
+    set({ wells });
+    return { wells: patch.size, withKb, deviated, unmatchedWells: [...unmatched] };
   },
 });
