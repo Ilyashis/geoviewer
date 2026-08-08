@@ -14,6 +14,8 @@
  * commonly relocated are exposed as options rather than hard-coded.
  */
 
+import type { SeismicSection } from './section';
+
 /** Sample format codes from the binary header (byte 3225). */
 export type SegyFormat = 1 | 2 | 3 | 5 | 8;
 
@@ -203,4 +205,61 @@ export function parseSegy(buffer: ArrayBuffer, opts: SegyOptions = {}): SegyFile
   const t0 = count > 0 ? view.getInt16(dataStart + 108) : 0;
 
   return { text, format, dt, ns, t0, traces };
+}
+
+/** An imported line, ready for the viewer. */
+export interface SegyLine {
+  id: string;
+  /** Short label — the survey name from the textual header, else the file name. */
+  label: string;
+  section: SeismicSection;
+  /** Trace coordinates as recorded. NOT necessarily the project's CRS. */
+  coords: { x: number; y: number }[];
+  /** Full textual header, kept so the user can inspect provenance. */
+  text: string;
+  traceCount: number;
+}
+
+/**
+ * Convert a parsed SEG-Y into the section raster the viewer already renders,
+ * so imported data goes through exactly the same path as the synthetic one —
+ * autotracking, manual node editing and depth conversion all come for free.
+ */
+export function segyToSection(f: SegyFile): SeismicSection {
+  const nTraces = f.traces.length;
+  const nSamples = f.ns;
+  const amp = new Float32Array(nTraces * nSamples);
+  let ampMax = 0;
+  for (let t = 0; t < nTraces; t++) {
+    const s = f.traces[t].samples;
+    amp.set(s, t * nSamples);
+    for (let i = 0; i < s.length; i++) {
+      const a = Math.abs(s[i]);
+      if (a > ampMax) ampMax = a;
+    }
+  }
+  return { nTraces, nSamples, dt: f.dt / 1000, t0: f.t0, amp, ampMax: ampMax || 1 };
+}
+
+/**
+ * Survey name from the Petrel-style textual header (`C 2 Name: 30389-07_0 …`),
+ * falling back to the file name. Only the name is taken, not the trailing
+ * processing notes, so the selector stays readable.
+ */
+export function segyLabel(text: string, fileName: string): string {
+  const m = text.match(/^\s*C\s*\d+\s*Name:\s*(\S+)/im);
+  return m ? m[1] : fileName.replace(/\.se?g?y$/i, '');
+}
+
+/** Parse a file straight into a viewer-ready line. */
+export function segyToLine(buffer: ArrayBuffer, fileName: string, opts: SegyOptions = {}): SegyLine {
+  const f = parseSegy(buffer, opts);
+  return {
+    id: `segy-${fileName}-${f.traces.length}`,
+    label: segyLabel(f.text, fileName),
+    section: segyToSection(f),
+    coords: f.traces.map((t) => ({ x: t.x, y: t.y })),
+    text: f.text,
+    traceCount: f.traces.length,
+  };
 }

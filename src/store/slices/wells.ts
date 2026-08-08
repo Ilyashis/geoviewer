@@ -5,6 +5,7 @@ import type { SurveyRow } from '../../survey/csv';
 import type { WellHeadRow } from '../../wells/heads';
 import { parseDev, type ParsedDev } from '../../wells/dev';
 import { parseCheckshots } from '../../wells/checkshot';
+import { segyToLine } from '../../seismic/segy';
 import type { SurveyStation } from '../../wells/deviation';
 import { parseLasToWell } from '../../las/parser';
 import { generateDemoLithology } from '../../plate/demoLithology';
@@ -72,8 +73,9 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
   addLasFiles: async (files) => {
     const all = Array.from(files);
     const isDev = (f: File) => /\.dev$/i.test(f.name);
+    const isSegy = (f: File) => /\.se?g?y$/i.test(f.name);
 
-    for (const file of all.filter((f) => !isDev(f) && !/\.asc$/i.test(f.name))) {
+    for (const file of all.filter((f) => !isDev(f) && !/\.asc$/i.test(f.name) && !isSegy(f))) {
       try {
         get().loadLasText(await file.text(), file.name);
       } catch (e) {
@@ -90,6 +92,15 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
         catch (e) { set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` }); }
       }
       if (parsed.length) get().setCheckshots(parsed);
+    }
+
+    // SEG-Y lines — read as binary, shown as their own sections.
+    for (const file of all.filter(isSegy)) {
+      try {
+        get().addSegyLine(segyToLine(await file.arrayBuffer(), file.name));
+      } catch (e) {
+        set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` });
+      }
     }
 
     const devs = all.filter(isDev);

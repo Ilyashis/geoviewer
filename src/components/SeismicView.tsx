@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { Marker, Well } from '../types';
 import {
   buildFieldSection, autoTrackHorizon, horizonControls,
-  sampleNodes, interpolateHorizon, tieToWells, sampleHorizonAt, type HorizonNode, type FieldSection,
+  sampleNodes, interpolateHorizon, tieToWells, sampleHorizonAt, EARTH,
+  type HorizonNode, type FieldSection,
 } from '../seismic';
 import { buildSurface } from '../core/framework';
 import { metricWells } from '../wells/coords';
@@ -19,7 +20,7 @@ interface Props {
   markers: Marker[];
 }
 
-type LineId = 'A' | 'B';
+type LineId = string;
 interface EditState { label: string; color: string; nodes: HorizonNode[] }
 
 const LINES: { id: LineId; label: string; axis: 'x' | 'y' }[] = [
@@ -52,10 +53,13 @@ export function SeismicView({ wells, markers }: Props) {
   const dragRef = useRef<number | null>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [lineId, setLineId] = useState<LineId>('A');
-  const [edits, setEdits] = useState<Record<LineId, EditState | null>>({ A: null, B: null });
+  const [edits, setEdits] = useState<Record<LineId, EditState | null>>({});
   const [convKey, setConvKey] = useState<ConvKey>('const');
   const [calModel, setCalModel] = useState<VelocityModel | null>(null);
+  /** Numbering for picks seeded by clicking an imported line. */
+  const [pickSeq, setPickSeq] = useState(1);
   const checkshots = useStore((s) => s.checkshots);
+  const segyLines = useStore((s) => s.segyLines);
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   const setSeismicHorizon = useStore((s) => s.setSeismicHorizon);
   const clearSeismicHorizon = useStore((s) => s.clearSeismicHorizon);
@@ -93,8 +97,37 @@ export function SeismicView({ wells, markers }: Props) {
   // raster gets rendered.
   const fieldA = useMemo(() => buildFieldSection(coordWells, markers, 'x'), [coordWells, markers]);
   const fieldB = useMemo(() => buildFieldSection(coordWells, markers, 'y'), [coordWells, markers]);
-  const fields = useMemo<Record<LineId, FieldSection | null>>(() => ({ A: fieldA, B: fieldB }), [fieldA, fieldB]);
-  const field = fields[lineId];
+  const fields = useMemo<Record<LineId, FieldSection | null>>(() => {
+    const m: Record<LineId, FieldSection | null> = { A: fieldA, B: fieldB };
+    // An imported line becomes a FieldSection with no wells posted: its
+    // coordinates are in the survey's own CRS, which need not match the
+    // project's, so nothing here may be tied to the map.
+    for (const l of segyLines) {
+      const c = l.coords.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+      m[l.id] = {
+        section: l.section,
+        earth: EARTH,
+        wells: [],
+        line: c.length >= 2
+          ? { p0: c[0], p1: c[c.length - 1] }
+          : { p0: { x: 0, y: 0 }, p1: { x: 1, y: 0 } },
+      };
+    }
+    return m;
+  }, [fieldA, fieldB, segyLines]);
+  const field = fields[lineId] ?? null;
+  const importedLine = segyLines.find((l) => l.id === lineId) ?? null;
+  const isImported = !!importedLine;
+
+  /** Synthetic lines plus every imported one, in selector order. */
+  const lineOptions = useMemo(
+    () => [
+      ...LINES.filter((l) => fields[l.id]).map((l) => ({ id: l.id as LineId, label: l.label, imported: false })),
+      ...segyLines.map((l) => ({ id: l.id, label: l.label, imported: true })),
+    ],
+    [fields, segyLines],
+  );
+  const lineLabel = (id: LineId) => lineOptions.find((l) => l.id === id)?.label ?? id;
 
   const horizonList = useMemo(() => {
     if (!field) return [];
@@ -108,7 +141,7 @@ export function SeismicView({ wells, markers }: Props) {
 
   // Drop stale picks on both lines when the underlying wells/markers change —
   // switching which line is on screen must NOT clear the other line's work.
-  useEffect(() => { setEdits({ A: null, B: null }); }, [coordWells, markers]);
+  useEffect(() => { setEdits({}); }, [coordWells, markers]);
 
   // Plot geometry — shared by the draw effect and the pointer handlers.
   const geom = useMemo(() => {
@@ -200,7 +233,7 @@ export function SeismicView({ wells, markers }: Props) {
     if (!edit || !crossing?.hit) return null;
     const other: LineId = lineId === 'A' ? 'B' : 'A';
     if (edits[other]?.label === edit.label) return null; // already comparable — shown as the tie row instead
-    return `Снимите «${edit.label}» и на линии ${LINES.find((l) => l.id === other)!.label}, чтобы сверить на пересечении.`;
+    return `Снимите «${edit.label}» и на линии ${lineLabel(other)}, чтобы сверить на пересечении.`;
   }, [edit, crossing, lineId, edits]);
 
   const snap = (label: string, color: string, seedTwt: number) => {
@@ -244,13 +277,25 @@ export function SeismicView({ wells, markers }: Props) {
     return { mx: e.clientX - r.left, my: e.clientY - r.top };
   };
   const onDown = (e: PointerEvent<HTMLCanvasElement>) => {
-    if (!edit) return;
     const { mx, my } = mouse(e);
+    // An imported line carries no well tops, so there is nothing to seed a pick
+    // from: the click itself is the seed. Autotracking then follows the event
+    // from there exactly as it does on a synthetic line.
+    if (!edit) {
+      if (isImported && geom && field && mx > geom.L && my > geom.T) {
+        snap(String(pickSeq), '#AF52DE', clamp(geom.twtOfY(my), geom.t0, geom.tEnd));
+      }
+      return;
+    }
     const k = nearestNode(mx, my);
     if (k != null) { dragRef.current = k; canvasRef.current!.setPointerCapture(e.pointerId); }
   };
   const onMove = (e: PointerEvent<HTMLCanvasElement>) => {
-    if (!edit || !geom) return;
+    if (!edit) {
+      if (canvasRef.current) canvasRef.current.style.cursor = isImported ? 'crosshair' : 'default';
+      return;
+    }
+    if (!geom) return;
     const { mx, my } = mouse(e);
     if (dragRef.current == null) {
       canvasRef.current!.style.cursor = nearestNode(mx, my) != null ? 'grab' : 'default';
@@ -394,15 +439,16 @@ export function SeismicView({ wells, markers }: Props) {
       <div className="seismic-panel">
         <div className="seismic-panel-h">Линия</div>
         <div className="seismic-picks">
-          {LINES.map((l) => (
-            <button key={l.id} className={`seismic-pick ${lineId === l.id ? 'on' : ''}`} onClick={() => setLineId(l.id)}>
+          {lineOptions.map((l) => (
+            <button key={l.id} className={`seismic-pick ${lineId === l.id ? 'on' : ''}`} onClick={() => setLineId(l.id)}
+              title={l.imported ? 'Импортированный SEG-Y' : 'Синтетическая линия вдоль скважин'}>
               {edits[l.id] && <span className="seismic-dot" style={{ background: edits[l.id]!.color }} />}
-              {l.label}
+              {l.imported ? '▤ ' : ''}{l.label}
             </button>
           ))}
         </div>
 
-        {horizonList.length > 0 && (
+        {!isImported && horizonList.length > 0 && (
           <>
             <div className="seismic-panel-h seismic-panel-h2">Снять горизонт</div>
             <div className="seismic-picks">
@@ -417,27 +463,56 @@ export function SeismicView({ wells, markers }: Props) {
             {crossHint && <div className="seismic-hint">{crossHint}</div>}
           </>
         )}
+
+        {isImported && (
+          <>
+            <div className="seismic-panel-h seismic-panel-h2">Горизонт</div>
+            {edit ? (
+              <>
+                <div className="seismic-hint">Перетащите узлы, чтобы поправить горизонт.</div>
+                <button className="seismic-remove" onClick={() => { setEdit(null); setPickSeq((n) => n + 1); }}>
+                  снять заново
+                </button>
+              </>
+            ) : (
+              // No well tops exist on an imported line, so the click is the seed.
+              <div className="seismic-hint">Кликните по отражателю — горизонт протрассируется от этой точки.</div>
+            )}
+          </>
+        )}
       </div>
 
       {pick && edit && (
         <aside className="seismic-result">
-          <div className="seismic-result-h"><span className="seismic-dot" style={{ background: edit.color }} />Горизонт {edit.label} · {LINES.find((l) => l.id === lineId)!.label}</div>
+          <div className="seismic-result-h"><span className="seismic-dot" style={{ background: edit.color }} />Горизонт {edit.label} · {lineLabel(lineId)}</div>
           <div className="seismic-row"><span>Узлов</span><b>{edit.nodes.length}</b></div>
           <div className="seismic-row"><span>TWT</span><b>{Math.round(pick.twtMin)}–{Math.round(pick.twtMax)} мс</b></div>
           <div className="seismic-row"><span>Глубина</span><b>{Math.round(pick.zMin)}–{Math.round(pick.zMax)} м</b></div>
           <div className="seismic-row"><span>→ buildSurface</span><b>{pick.nx}×{pick.ny}</b></div>
-          <div className="seismic-row strong"><span>Согласие со скв.</span><b>±{pick.maxMiss.toFixed(1)} м</b></div>
+          {!isImported && (
+            <div className="seismic-row strong"><span>Согласие со скв.</span><b>±{pick.maxMiss.toFixed(1)} м</b></div>
+          )}
           {crossing?.tie && crossing.tie.label === edit.label && (
             <div className="seismic-row strong">
               <span title="Разница глубин той же кровли на пересечении двух линий">Пересеч. линий</span>
               <b>±{crossing.tie.mistie.toFixed(1)} м</b>
             </div>
           )}
-          <div className="seismic-note">Горизонт → контрольные точки → каркас (тот же <code>buildSurface</code>, что и для скважин).</div>
-          <button className="seismic-apply" onClick={() => setSeismicHorizon(edit.label, lineId, pick.controls)}>
-            {inMap ? 'Обновить в карте' : 'Использовать в карте'}
-          </button>
-          {inMap && <button className="seismic-remove" onClick={() => clearSeismicHorizon(edit.label, lineId)}>убрать из карты</button>}
+          {isImported ? (
+            <div className="seismic-note">
+              Координаты этой съёмки — в своей системе (в заголовке <code>CRS: &lt;undef&gt;</code>) и не совпадают
+              с координатами скважин. Пока преобразование неизвестно, перенос в карту дал бы неверное положение,
+              поэтому он отключён.
+            </div>
+          ) : (
+            <>
+              <div className="seismic-note">Горизонт → контрольные точки → каркас (тот же <code>buildSurface</code>, что и для скважин).</div>
+              <button className="seismic-apply" onClick={() => setSeismicHorizon(edit.label, lineId, pick.controls)}>
+                {inMap ? 'Обновить в карте' : 'Использовать в карте'}
+              </button>
+              {inMap && <button className="seismic-remove" onClick={() => clearSeismicHorizon(edit.label, lineId)}>убрать из карты</button>}
+            </>
+          )}
         </aside>
       )}
 
@@ -456,7 +531,7 @@ export function SeismicView({ wells, markers }: Props) {
       </div>
 
       <div className="seismic-badge">
-        Линия {lineId} ({LINES.find((l) => l.id === lineId)!.label}) · {field.section.nTraces} трасс · {conv.kind === 'const'
+        {isImported ? `SEG-Y · ${lineLabel(lineId)}` : `Линия ${lineId} (${lineLabel(lineId)})`} · {field.section.nTraces} трасс · {conv.kind === 'const'
           ? `v = ${conv.v} м/с`
           : `v = ${velInfo?.vTop}→${velInfo?.vBot} м/с`}
         {convKey === 'checkshot' && checkshotModel?.kind === 'table' && (

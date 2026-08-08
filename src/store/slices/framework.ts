@@ -1,6 +1,7 @@
 import type { StateCreator } from 'zustand';
 import type { ControlPoint } from '../../core/framework';
 import type { WellCheckshot } from '../../wells/checkshot';
+import type { SegyLine } from '../../seismic/segy';
 import type { Store } from '../types';
 
 /**
@@ -14,6 +15,10 @@ export interface FrameworkSlice {
   /** Measured time–depth pairs per well — the real velocity control. */
   checkshots: WellCheckshot[];
   setCheckshots: (cs: WellCheckshot[]) => void;
+  /** Imported SEG-Y lines, shown as their own sections. */
+  segyLines: SegyLine[];
+  addSegyLine: (line: SegyLine) => void;
+  removeSegyLine: (id: string) => void;
   seismicHorizons: Record<string, Record<string, ControlPoint[]>>;
   setSeismicHorizon: (label: string, lineId: string, controls: ControlPoint[]) => void;
   clearSeismicHorizon: (label: string, lineId: string) => void;
@@ -28,6 +33,11 @@ export const createFrameworkSlice: StateCreator<Store, [], [], FrameworkSlice> =
       for (const c of cs) byWell.set(c.well, c);
       return { checkshots: [...byWell.values()] };
     }),
+  segyLines: [],
+  // Re-importing the same file replaces it rather than stacking duplicates.
+  addSegyLine: (line) =>
+    set((s) => ({ segyLines: [...s.segyLines.filter((l) => l.id !== line.id), line] })),
+  removeSegyLine: (id) => set((s) => ({ segyLines: s.segyLines.filter((l) => l.id !== id) })),
   seismicHorizons: {},
   setSeismicHorizon: (label, lineId, controls) =>
     set((s) => ({
