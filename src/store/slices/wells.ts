@@ -6,6 +6,7 @@ import type { WellHeadRow } from '../../wells/heads';
 import { parseDev, type ParsedDev } from '../../wells/dev';
 import { parseCheckshots } from '../../wells/checkshot';
 import { segyToLine } from '../../seismic/segy';
+import { readTextFile } from '../../util/encoding';
 import type { SurveyStation } from '../../wells/deviation';
 import { parseLasToWell } from '../../las/parser';
 import { generateDemoLithology } from '../../plate/demoLithology';
@@ -77,7 +78,7 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
 
     for (const file of all.filter((f) => !isDev(f) && !/\.asc$/i.test(f.name) && !isSegy(f))) {
       try {
-        get().loadLasText(await file.text(), file.name);
+        get().loadLasText(await readTextFile(file), file.name);
       } catch (e) {
         set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` });
       }
@@ -88,7 +89,7 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
     if (asc.length) {
       const parsed = [];
       for (const file of asc) {
-        try { parsed.push(...parseCheckshots(await file.text())); }
+        try { parsed.push(...parseCheckshots(await readTextFile(file))); }
         catch (e) { set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` }); }
       }
       if (parsed.length) get().setCheckshots(parsed);
@@ -108,7 +109,7 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
     const parsed: ParsedDev[] = [];
     for (const file of devs) {
       try {
-        parsed.push(parseDev(await file.text(), file.name));
+        parsed.push(parseDev(await readTextFile(file), file.name));
       } catch (e) {
         set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` });
       }

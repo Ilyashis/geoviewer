@@ -231,3 +231,30 @@ ${wellLines}
     expect(parseLasToWell(withWellSection(' EKB.M UNKNOWN :')).kb).toBeUndefined();
   });
 });
+
+describe('нестандартная раскладка ~Well', () => {
+  const inverted = `~V
+ VERS. 2.0 :
+ WRAP. NO :
+~W
+ NULL.  -999.25 :
+ WELL.                    WELL: 22R
+ UWI .                     UWI: 256_22R
+~C
+ DEPT.M :
+ GR.GAPI :
+~A
+1670 75`;
+
+  it('берёт имя из описания, когда значение дублирует мнемонику', () => {
+    // Реальный файл пишет «WELL. WELL: 22R» — имя справа от двоеточия.
+    const w = parseLasToWell(inverted, '22R_CGR.las');
+    expect(w.name).toBe('22R');
+    expect(w.uwi).toBe('256_22R');
+  });
+
+  it('не ломает обычную раскладку', () => {
+    const normal = inverted.replace(' WELL.                    WELL: 22R', ' WELL.  2029 : 2029 куст 11');
+    expect(parseLasToWell(normal, 'x.las').name).toBe('2029');
+  });
+});

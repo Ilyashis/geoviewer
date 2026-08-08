@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { X, Upload, Milestone, Layers, Spline, MapPin } from 'lucide-react';
 import { useStore } from '../store';
 import { parseTopsCsv } from '../tops/csv';
+import { parsePetrelTops, isPetrelTops } from '../tops/petrel';
+import { readTextFile } from '../util/encoding';
 import { parseLithologyCsv } from '../lithology/csv';
 import { parseSurveyCsv } from '../survey/csv';
 import { parseWellHeadsCsv } from '../wells/heads';
@@ -51,11 +53,26 @@ export function ImportModal({ onClose }: Props) {
     reset();
     try {
       if (kind === 'tops') {
-        const { rows } = parseTopsCsv(text);
+        // Petrel exports its tops with a BEGIN HEADER block rather than a header
+        // row, so the format is detected instead of asked for.
+        const petrel = isPetrelTops(text);
+        const parsed = petrel ? parsePetrelTops(text) : parseTopsCsv(text);
+        const rows = parsed.rows;
         if (rows.length === 0) { setError('Нет валидных строк с пикировками.'); return; }
         const r = importTops(rows);
-        setSummary(`Импортировано: ${r.surfaces} пластов, ${r.picks} пикировок.`);
-        if (r.unmatchedWells.length) setWarn(`Не найдены скважины: ${r.unmatchedWells.join(', ')}`);
+        // A Petrel tops export carries the wellhead X/Y on every row. Those are
+        // often the only coordinates available — Petrel omits them from LAS —
+        // so applying them here saves importing a separate heads table.
+        const heads = petrel && 'heads' in parsed ? parsed.heads : [];
+        const h = heads.length ? importWellHeads(heads.map((x) => ({ ...x, kb: undefined }))) : null;
+        const via = petrel ? ' (Petrel Well Tops)' : '';
+        const coords = h && h.wells > 0 ? `, координаты ${h.wells} скв.` : '';
+        setSummary(`Импортировано${via}: ${r.surfaces} пластов, ${r.picks} пикировок${coords}.`);
+        if (r.unmatchedWells.length) {
+          const list = r.unmatchedWells.slice(0, 12).join(', ');
+          const more = r.unmatchedWells.length > 12 ? ` и ещё ${r.unmatchedWells.length - 12}` : '';
+          setWarn(`Не найдены скважины: ${list}${more}`);
+        }
       } else if (kind === 'litho') {
         const { rows } = parseLithologyCsv(text);
         if (rows.length === 0) { setError('Нет валидных строк с интервалами.'); return; }
@@ -148,7 +165,7 @@ export function ImportModal({ onClose }: Props) {
             type="file"
             accept=".csv,.tsv,.txt"
             hidden
-            onChange={async (e) => { const f = e.target.files?.[0]; if (f) setText(await f.text()); e.target.value = ''; }}
+            onChange={async (e) => { const f = e.target.files?.[0]; if (f) setText(await readTextFile(f)); e.target.value = ''; }}
           />
           <button className="btn ghost" onClick={() => fileRef.current?.click()}>
             <Upload size={15} strokeWidth={1.75} /> Загрузить файл

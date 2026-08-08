@@ -173,9 +173,23 @@ export function parseLasToWell(text: string, fileName = 'well.las'): Well {
     header[k] = item.value;
   }
 
-  const name =
-    parsed.well['WELL']?.value?.trim() ||
-    fileName.replace(/\.las$/i, '');
+  /**
+   * Some writers invert the line, putting the label where the value belongs:
+   * `WELL.   WELL: 22R` instead of `WELL.  22R : WELL NAME`. The giveaway is a
+   * value identical to its own mnemonic, in which case the description holds
+   * the real content. Without this the well is named "WELL" and stops matching
+   * its tops.
+   */
+  const headerValue = (key: string): string | undefined => {
+    const item = parsed.well[key];
+    if (!item) return undefined;
+    const v = item.value?.trim();
+    if (v && v.toUpperCase() !== key.toUpperCase()) return v;
+    const d = item.description?.trim();
+    return d && d.toUpperCase() !== key.toUpperCase() ? d : v || undefined;
+  };
+
+  const name = headerValue('WELL') || fileName.replace(/\.las$/i, '');
 
   // Surface coordinates. Projected (metric) mnemonics are tried first and as a
   // complete pair: a file carrying BOTH UTM and lat/lon must not end up with
@@ -220,7 +234,7 @@ export function parseLasToWell(text: string, fileName = 'well.las'): Well {
   return {
     id: `well-${uid()}`,
     name,
-    uwi: parsed.well['UWI']?.value || parsed.well['API']?.value || undefined,
+    uwi: headerValue('UWI') || headerValue('API') || undefined,
     x,
     y,
     geodetic,
