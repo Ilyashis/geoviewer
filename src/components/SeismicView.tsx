@@ -11,6 +11,7 @@ import {
   twtToDepth, velocityAt, calibrateVelocity, DEFAULT_VELOCITY, COMPACTION,
   type VelocityModel, type VelocitySample,
 } from '../core/velocity';
+import { fieldVelocityTable } from '../wells/checkshot';
 import { useStore } from '../store';
 
 interface Props {
@@ -26,7 +27,7 @@ const LINES: { id: LineId; label: string; axis: 'x' | 'y' }[] = [
   { id: 'B', label: 'S → N', axis: 'y' },
 ];
 
-type ConvKey = 'const' | 'linear' | 'cal';
+type ConvKey = 'const' | 'linear' | 'cal' | 'checkshot';
 const NODE_COUNT = 14; // editable nodes along the horizon
 // Depth-conversion presets; 'cal' is fitted from the well ties on demand.
 const CONV_PRESETS: Record<'const' | 'linear', VelocityModel> = { const: DEFAULT_VELOCITY, linear: COMPACTION };
@@ -54,6 +55,7 @@ export function SeismicView({ wells, markers }: Props) {
   const [edits, setEdits] = useState<Record<LineId, EditState | null>>({ A: null, B: null });
   const [convKey, setConvKey] = useState<ConvKey>('const');
   const [calModel, setCalModel] = useState<VelocityModel | null>(null);
+  const checkshots = useStore((s) => s.checkshots);
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   const setSeismicHorizon = useStore((s) => s.setSeismicHorizon);
   const clearSeismicHorizon = useStore((s) => s.clearSeismicHorizon);
@@ -64,9 +66,21 @@ export function SeismicView({ wells, markers }: Props) {
   // The conversion velocity applied to picked times (independent of the earth truth
   // the section was built with). Switching it re-converts live — it does NOT rebuild
   // the section, so the picked horizon survives.
+  // Measured time–depth from the wells — the only non-guessed velocity available.
+  const checkshotModel = useMemo<VelocityModel | null>(() => {
+    if (checkshots.length === 0) return null;
+    const pairs = fieldVelocityTable(checkshots);
+    if (pairs.length < 2) return null;
+    return { kind: 'table', pairs, label: `чекшоты, ${checkshots.length} скв.` };
+  }, [checkshots]);
+
   const conv = useMemo<VelocityModel>(
-    () => (convKey === 'cal' && calModel ? calModel : CONV_PRESETS[convKey === 'cal' ? 'const' : convKey]),
-    [convKey, calModel],
+    () => {
+      if (convKey === 'cal' && calModel) return calModel;
+      if (convKey === 'checkshot' && checkshotModel) return checkshotModel;
+      return CONV_PRESETS[convKey === 'cal' || convKey === 'checkshot' ? 'const' : convKey];
+    },
+    [convKey, calModel, checkshotModel],
   );
   // Project lon/lat wells to metres — line geometry and depth conversion below
   // are metric.
@@ -154,9 +168,14 @@ export function SeismicView({ wells, markers }: Props) {
   // pure velocity residual the calibration minimises (no picking involved).
   const velTie = useMemo(() => {
     if (!field) return null;
-    let max = 0;
-    for (const w of field.wells) for (const t of w.tops) max = Math.max(max, Math.abs(twtToDepth(conv, t.twt) - t.depth));
-    return max;
+    let max = 0, ties = 0;
+    for (const w of field.wells) for (const t of w.tops) {
+      max = Math.max(max, Math.abs(twtToDepth(conv, t.twt) - t.depth));
+      ties++;
+    }
+    // No picks means nothing to tie to — showing a green "±0 м" would read as a
+    // perfect match when it is really an absence of evidence.
+    return ties > 0 ? max : null;
   }, [field, conv]);
 
   // Where the two lines physically cross, and — if the same horizon is picked on
@@ -426,6 +445,11 @@ export function SeismicView({ wells, markers }: Props) {
         <span className="seismic-vel-l">Глубина</span>
         <button className={`seismic-vel-btn ${convKey === 'const' ? 'on' : ''}`} onClick={() => setConvKey('const')}>Постоянная</button>
         <button className={`seismic-vel-btn ${convKey === 'linear' ? 'on' : ''}`} onClick={() => setConvKey('linear')}>Компакция</button>
+        {checkshotModel && (
+          <button className={`seismic-vel-btn cal ${convKey === 'checkshot' ? 'on' : ''}`}
+            onClick={() => setConvKey('checkshot')}
+            title="Измеренная связь время–глубина по чекшотам — не подгонка, а факт">Чекшоты</button>
+        )}
         <button className={`seismic-vel-btn cal ${convKey === 'cal' ? 'on' : ''}`} onClick={calibrate}
           title="Подбирает V₀/k по кровлям и притягивает снятые горизонты точно на скважины (на обеих линиях)">Калибровать по скв.</button>
         {velTie != null && <span className={`seismic-vel-tie ${velTie < 8 ? 'ok' : ''}`} title="невязка v-модели по кровлям скважин">тай ±{Math.round(velTie)} м</span>}
@@ -435,9 +459,13 @@ export function SeismicView({ wells, markers }: Props) {
         Линия {lineId} ({LINES.find((l) => l.id === lineId)!.label}) · {field.section.nTraces} трасс · {conv.kind === 'const'
           ? `v = ${conv.v} м/с`
           : `v = ${velInfo?.vTop}→${velInfo?.vBot} м/с`}
+        {convKey === 'checkshot' && checkshotModel?.kind === 'table' && (
+          <span className="seismic-cal"> · {checkshotModel.label}</span>
+        )}
         {convKey === 'cal' && calModel && (
           <span className="seismic-cal"> · калибр. {calModel.kind === 'linear'
-            ? `V₀=${calModel.v0}, k=${calModel.k}` : `V=${calModel.v}`}</span>
+            ? `V₀=${calModel.v0}, k=${calModel.k}`
+            : calModel.kind === 'const' ? `V=${calModel.v}` : 'по чекшотам'}</span>
         )}
       </div>
     </div>

@@ -1,5 +1,6 @@
 import type { StateCreator } from 'zustand';
 import type { ControlPoint } from '../../core/framework';
+import type { WellCheckshot } from '../../wells/checkshot';
 import type { Store } from '../types';
 
 /**
@@ -10,12 +11,23 @@ import type { Store } from '../types';
  * merges all of a label's lines with the well picks when building that surface.
  */
 export interface FrameworkSlice {
+  /** Measured time–depth pairs per well — the real velocity control. */
+  checkshots: WellCheckshot[];
+  setCheckshots: (cs: WellCheckshot[]) => void;
   seismicHorizons: Record<string, Record<string, ControlPoint[]>>;
   setSeismicHorizon: (label: string, lineId: string, controls: ControlPoint[]) => void;
   clearSeismicHorizon: (label: string, lineId: string) => void;
 }
 
 export const createFrameworkSlice: StateCreator<Store, [], [], FrameworkSlice> = (set) => ({
+  checkshots: [],
+  // Merge by well: importing one file must not drop the wells already loaded.
+  setCheckshots: (cs) =>
+    set((s) => {
+      const byWell = new Map(s.checkshots.map((c) => [c.well, c]));
+      for (const c of cs) byWell.set(c.well, c);
+      return { checkshots: [...byWell.values()] };
+    }),
   seismicHorizons: {},
   setSeismicHorizon: (label, lineId, controls) =>
     set((s) => ({

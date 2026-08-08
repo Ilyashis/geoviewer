@@ -64,3 +64,46 @@ describe('calibrateVelocity', () => {
     expect(calibrateVelocity([{ depth: 2000, twt: 1800 }])).toEqual(DEFAULT_VELOCITY);
   });
 });
+
+describe('табличная модель (чекшоты)', () => {
+  // Реальная форма: вверху зона пониженных скоростей, глубже ускорение —
+  // никакая V₀+k·z такого не опишет.
+  const table: VelocityModel = {
+    kind: 'table',
+    pairs: [
+      { z: 0, twt: 0 },
+      { z: 500, twt: 462 },   // ~2160 м/с
+      { z: 1000, twt: 830 },  // ~2410 м/с в среднем
+      { z: 2000, twt: 1500 },
+      { z: 3000, twt: 2000 },
+    ],
+  };
+
+  it('точно воспроизводит узлы таблицы', () => {
+    expect(depthToTwt(table, 500)).toBeCloseTo(462, 6);
+    expect(twtToDepth(table, 1500)).toBeCloseTo(2000, 6);
+  });
+
+  it('интерполирует между узлами линейно', () => {
+    expect(depthToTwt(table, 1500)).toBeCloseTo((830 + 1500) / 2, 6);
+  });
+
+  it('глубина↔время обратимы на всём диапазоне', () => {
+    for (const z of [250, 750, 1500, 2500, 2999]) {
+      expect(twtToDepth(table, depthToTwt(table, z))).toBeCloseTo(z, 6);
+    }
+  });
+
+  it('за пределами таблицы продолжает крайний градиент, а не упирается в полку', () => {
+    const deep = depthToTwt(table, 4000);
+    expect(deep).toBeGreaterThan(2000);           // не «прилип» к последнему узлу
+    expect(twtToDepth(table, deep)).toBeCloseTo(4000, 6);
+  });
+
+  it('передаёт немонотонный тренд скорости, который линейная модель теряет', () => {
+    // Между 0–500 средняя скорость ниже, чем между 2000–3000.
+    const vShallow = (2 * 500) / (depthToTwt(table, 500) / 1000);
+    const vDeep = (2 * 1000) / ((depthToTwt(table, 3000) - depthToTwt(table, 2000)) / 1000);
+    expect(vDeep).toBeGreaterThan(vShallow);
+  });
+});

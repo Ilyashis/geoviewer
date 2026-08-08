@@ -237,7 +237,7 @@ export default function App() {
           )}
           <button className="iconbtn" title="Поделиться"><Share2 size={16} strokeWidth={1.75} /></button>
           <div className="avatar">ИХ</div>
-          <input ref={inputRef} type="file" accept=".las,.dev" multiple hidden
+          <input ref={inputRef} type="file" accept=".las,.dev,.asc" multiple hidden
             onChange={(e) => { if (e.target.files) addLasFiles(e.target.files); e.target.value = ''; }} />
         </div>
       </header>

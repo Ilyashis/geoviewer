@@ -4,6 +4,7 @@ import type { LithoRow } from '../../lithology/csv';
 import type { SurveyRow } from '../../survey/csv';
 import type { WellHeadRow } from '../../wells/heads';
 import { parseDev, type ParsedDev } from '../../wells/dev';
+import { parseCheckshots } from '../../wells/checkshot';
 import type { SurveyStation } from '../../wells/deviation';
 import { parseLasToWell } from '../../las/parser';
 import { generateDemoLithology } from '../../plate/demoLithology';
@@ -72,12 +73,23 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
     const all = Array.from(files);
     const isDev = (f: File) => /\.dev$/i.test(f.name);
 
-    for (const file of all.filter((f) => !isDev(f))) {
+    for (const file of all.filter((f) => !isDev(f) && !/\.asc$/i.test(f.name))) {
       try {
         get().loadLasText(await file.text(), file.name);
       } catch (e) {
         set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` });
       }
+    }
+
+    // Checkshots (.asc) — the measured time–depth relation.
+    const asc = all.filter((f) => /\.asc$/i.test(f.name));
+    if (asc.length) {
+      const parsed = [];
+      for (const file of asc) {
+        try { parsed.push(...parseCheckshots(await file.text())); }
+        catch (e) { set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` }); }
+      }
+      if (parsed.length) get().setCheckshots(parsed);
     }
 
     const devs = all.filter(isDev);

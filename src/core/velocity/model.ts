@@ -8,20 +8,53 @@
  * `linear` — instantaneous V(z) = v0 + k·z, the classic compaction gradient:
  *            rocks get faster with depth, so the time axis stretches shallow and
  *            compresses deep. Its time↔depth pair is analytic (no integration).
+ * `table`  — a measured time–depth relation (checkshots/VSP), interpolated.
+ *            Real curves are not monotonic in velocity — a shallow low-velocity
+ *            zone is common — so no analytic law reproduces them; the measured
+ *            pairs are used directly and only extrapolated beyond their range.
  */
 export type VelocityModel =
   | { kind: 'const'; v: number }        // m/s
-  | { kind: 'linear'; v0: number; k: number }; // v0 in m/s, k in 1/s
+  | { kind: 'linear'; v0: number; k: number } // v0 in m/s, k in 1/s
+  | { kind: 'table'; pairs: { z: number; twt: number }[]; label?: string };
 
 const FLAT = 1e-6; // |k| below this ⇒ treat linear as constant v0
 
+/**
+ * Piecewise-linear lookup on sorted pairs. Outside the sampled range the end
+ * segment's gradient is continued rather than clamping, so a horizon slightly
+ * shallower or deeper than the checkshots still converts instead of collapsing
+ * onto the first or last sample.
+ */
+function interp(pairs: { a: number; b: number }[], a: number): number {
+  const n = pairs.length;
+  if (n === 0) return 0;
+  if (n === 1) return pairs[0].b;
+  const slopeAt = (i: number, j: number) => {
+    const da = pairs[j].a - pairs[i].a;
+    return da === 0 ? 0 : (pairs[j].b - pairs[i].b) / da;
+  };
+  if (a <= pairs[0].a) return pairs[0].b + (a - pairs[0].a) * slopeAt(0, 1);
+  if (a >= pairs[n - 1].a) return pairs[n - 1].b + (a - pairs[n - 1].a) * slopeAt(n - 2, n - 1);
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (pairs[mid].a <= a) lo = mid; else hi = mid; }
+  const t = pairs[hi].a === pairs[lo].a ? 0 : (a - pairs[lo].a) / (pairs[hi].a - pairs[lo].a);
+  return pairs[lo].b + t * (pairs[hi].b - pairs[lo].b);
+}
+
 /** Instantaneous velocity (m/s) at a depth. */
 export function velocityAt(m: VelocityModel, z: number): number {
-  return m.kind === 'const' ? m.v : m.v0 + m.k * z;
+  if (m.kind === 'const') return m.v;
+  if (m.kind === 'linear') return m.v0 + m.k * z;
+  // Instantaneous velocity from the local gradient of the measured curve.
+  const dz = 1;
+  const dt = depthToTwt(m, z + dz) - depthToTwt(m, z - dz);
+  return dt > 0 ? (2000 * 2 * dz) / dt : avgVelocityTo(m, z || 1);
 }
 
 /** Depth (m) → two-way time (ms). Inverse of {@link twtToDepth} for the same model. */
 export function depthToTwt(m: VelocityModel, z: number): number {
+  if (m.kind === 'table') return interp(m.pairs.map((p) => ({ a: p.z, b: p.twt })), z);
   if (m.kind === 'const') return (2000 * z) / m.v;
   if (Math.abs(m.k) < FLAT) return (2000 * z) / m.v0;
   return (2000 * Math.log(1 + (m.k * z) / m.v0)) / m.k;
@@ -29,6 +62,7 @@ export function depthToTwt(m: VelocityModel, z: number): number {
 
 /** Two-way time (ms) → depth (m). Inverse of {@link depthToTwt} for the same model. */
 export function twtToDepth(m: VelocityModel, twtMs: number): number {
+  if (m.kind === 'table') return interp(m.pairs.map((p) => ({ a: p.twt, b: p.z })), twtMs);
   if (m.kind === 'const') return (m.v * twtMs) / 2000;
   if (Math.abs(m.k) < FLAT) return (m.v0 * twtMs) / 2000;
   return (m.v0 / m.k) * (Math.exp((m.k * twtMs) / 2000) - 1);
