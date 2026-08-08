@@ -28,7 +28,8 @@ const PAD = 64;
 type Mode = 'structure' | 'isochore';
 
 interface Pos { id: string; name: string; x: number; y: number }
-interface FaultDef { id: string; label: string; markerId: string; trace: Pt[] }
+/** A fault trace and the пласты its plane cuts (usually all of them). */
+interface FaultDef { id: string; label: string; markerIds: string[]; trace: Pt[] }
 
 /** Two-hue ramp, low→high value. */
 const RAMP: [number, number, number][] = [
@@ -69,7 +70,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const pinchDragRef = useRef<number | null>(null);
   const [faults, setFaults] = useState<FaultDef[]>([]);
   const [draftFault, setDraftFault] = useState<Pt[]>([]);
-  const [draftFaultMarkerId, setDraftFaultMarkerId] = useState<string | null>(null);
+  const [draftFaultMarkerIds, setDraftFaultMarkerIds] = useState<string[]>([]);
   const [drawingFault, setDrawingFault] = useState(false);
   const faultDragRef = useRef<{ faultId: string; idx: number } | null>(null);
   const faultSeqRef = useRef(0);
@@ -205,8 +206,8 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   // the selected surface in Структура, either boundary of the zone in Изохора
   // (the interval's rock sits between them, so a break at either end breaks it).
   const activeFaults = useMemo(() => {
-    if (mode === 'structure') return surface ? faults.filter((f) => f.markerId === surface.id) : [];
-    return faults.filter((f) => f.markerId === top?.id || f.markerId === base?.id);
+    if (mode === 'structure') return surface ? faults.filter((f) => f.markerIds.includes(surface.id)) : [];
+    return faults.filter((f) => (top && f.markerIds.includes(top.id)) || (base && f.markerIds.includes(base.id)));
   }, [faults, mode, surface, top, base]);
 
   // Fault traces block interpolation across them (see buildSurface) — only the
@@ -339,25 +340,35 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     [pinchOn, pinchPts],
   );
 
-  // Apparent throw per fault, derived from its OWN tied пласт's structure —
-  // not whatever's currently on screen, so the number is stable across mode/tab
-  // switches. Faults already shape `grid` itself (buildSurface got faultTraces
-  // for the active ones), so volResult below reflects them; this is reporting.
+  // Throw is per (fault, пласт): one plane cutting several horizons offsets each
+  // by its own amount — that's real, throw varies along a fault plane. Each is
+  // measured against that пласт's own structure, so a given pair's number never
+  // changes with what's on screen. Faults already shape `grid` itself
+  // (buildSurface got faultTraces for the active ones); this is reporting.
   const faultThrows = useMemo(() => {
-    const m: Record<string, number | null> = {};
+    const m: Record<string, Record<string, number | null>> = {};
     for (const f of faults) {
-      const marker = mappable.find((mk) => mk.id === f.markerId);
-      m[f.id] = marker ? estimateThrow(f.trace, structurePointsFor(marker)) : null;
+      m[f.id] = {};
+      for (const id of f.markerIds) {
+        const marker = mappable.find((mk) => mk.id === id);
+        m[f.id][id] = marker ? estimateThrow(f.trace, structurePointsFor(marker)) : null;
+      }
     }
     return m;
   }, [faults, mappable, coordWells, trajs]);
+
+  // The пласт whose structure is being gridded — the one a displayed throw refers to.
+  const viewMarker = mode === 'structure' ? surface : top;
+  const throwAtView = (f: FaultDef): number | null =>
+    (viewMarker ? faultThrows[f.id]?.[viewMarker.id] : null) ?? null;
+
   // Only faults active for the current surface/zone count toward the reserves
-  // report — a fault tied to a пласт you're not looking at didn't touch this volume.
+  // report — a fault that doesn't cut this пласт didn't touch this volume.
   const faultSummary = useMemo(() => {
     if (activeFaults.length === 0) return null;
-    const throws = activeFaults.map((f) => faultThrows[f.id]).filter((t): t is number => t != null).map(Math.abs);
+    const throws = activeFaults.map(throwAtView).filter((t): t is number => t != null).map(Math.abs);
     return { count: activeFaults.length, maxThrow: throws.length ? Math.max(...throws) : null };
-  }, [activeFaults, faultThrows]);
+  }, [activeFaults, faultThrows, viewMarker]);
 
   const volResult = useMemo(
     () => (mode === 'isochore' && grid ? volumetrics(grid, effVol, contact, pinchClip) : null),
@@ -414,23 +425,30 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const cancelPinchDraw = () => { setDrawingPinch(false); setPinchOn(false); setPinchPts([]); };
 
   // --- Faults: an open trace (≥2 vertices) per fault, same click/drag pattern ---
-  // Tied to a пласт at creation — defaults to whatever's currently in view, but
-  // is a real choice (a fault picked while looking at Top A can be reassigned to
-  // KP S8 before drawing) via the marker pills shown while drawing.
+  // A fault plane normally cuts the whole section, so it defaults to every пласт;
+  // the pills shown while drawing let you deselect the ones it doesn't reach
+  // (a fault dying out upward, or one that only offsets the lower horizons).
   const startFaultDraw = () => {
     setDrawingFault(true);
     setDraftFault([]);
     setDrawingPinch(false);
-    setDraftFaultMarkerId((mode === 'structure' ? surface?.id : top?.id) ?? mappable[0]?.id ?? null);
+    setDraftFaultMarkerIds(mappable.map((m) => m.id));
   };
+  const toggleDraftMarker = (id: string) =>
+    setDraftFaultMarkerIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
   const finishFaultDraw = () => {
-    if (draftFault.length < 2 || !draftFaultMarkerId) return;
+    if (draftFault.length < 2 || draftFaultMarkerIds.length === 0) return;
     faultSeqRef.current += 1;
-    setFaults((fs) => [...fs, { id: `fault-${faultSeqRef.current}`, label: `Разлом ${faultSeqRef.current}`, markerId: draftFaultMarkerId, trace: draftFault }]);
+    setFaults((fs) => [...fs, {
+      id: `fault-${faultSeqRef.current}`,
+      label: `Разлом ${faultSeqRef.current}`,
+      markerIds: mappable.filter((m) => draftFaultMarkerIds.includes(m.id)).map((m) => m.id), // keep пласт order
+      trace: draftFault,
+    }]);
     setDrawingFault(false);
     setDraftFault([]);
   };
-  const cancelFaultDraw = () => { setDrawingFault(false); setDraftFault([]); setDraftFaultMarkerId(null); };
+  const cancelFaultDraw = () => { setDrawingFault(false); setDraftFault([]); setDraftFaultMarkerIds([]); };
   const removeFault = (id: string) => setFaults((fs) => fs.filter((f) => f.id !== id));
 
   const svgDown = (e: ReactPointerEvent<SVGSVGElement>) => {
@@ -615,27 +633,41 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             <button className="map-fault-add" disabled={drawingFault} onClick={startFaultDraw}>+ разлом</button>
           </div>
           {drawingFault && (
-            <div className="map-surf-row map-fault-marker-pick">
-              {mappable.map((m) => (
-                <button key={m.id} className={`map-surf ${draftFaultMarkerId === m.id ? 'on' : ''}`}
-                  onClick={() => setDraftFaultMarkerId(m.id)}>
-                  <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
+            <div className="map-fault-marker-pick">
+              <div className="map-fault-pick-h">
+                <span>Сечёт пласты</span>
+                <button className="map-fault-all"
+                  onClick={() => setDraftFaultMarkerIds(draftFaultMarkerIds.length === mappable.length ? [] : mappable.map((m) => m.id))}>
+                  {draftFaultMarkerIds.length === mappable.length ? 'снять все' : 'все'}
                 </button>
-              ))}
+              </div>
+              <div className="map-surf-row">
+                {mappable.map((m) => (
+                  <button key={m.id} className={`map-surf ${draftFaultMarkerIds.includes(m.id) ? 'on' : ''}`}
+                    onClick={() => toggleDraftMarker(m.id)}>
+                    <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           {faults.length === 0 ? (
             <div className="map-fault-empty">Нет разломов</div>
           ) : (
             faults.map((f) => {
-              const t = faultThrows[f.id];
-              const marker = mappable.find((m) => m.id === f.markerId);
+              const t = throwAtView(f);
+              const cut = mappable.filter((m) => f.markerIds.includes(m.id));
               const isActive = activeFaults.some((af) => af.id === f.id);
+              const cutLabel = cut.length === mappable.length ? 'все' : cut.map((m) => m.label).join(', ');
+              // Per-пласт throws, so the numbers behind a single displayed value stay inspectable.
+              const perMarker = cut
+                .map((m) => `${m.label}: ${faultThrows[f.id]?.[m.id] == null ? '—' : `${Math.round(Math.abs(faultThrows[f.id][m.id]!))} м`}`)
+                .join('\n');
               return (
                 <div key={f.id} className={`map-fault-row ${isActive ? '' : 'inactive'}`}
-                  title={isActive ? undefined : `Не влияет на текущий вид — привязан к «${marker?.label ?? '?'}»`}>
-                  <span className="map-fault-dot" style={marker ? { background: marker.color } : undefined} />
-                  <span className="map-fault-label">{f.label} · {marker?.label ?? '?'}</span>
+                  title={`${f.label} · сечёт: ${cutLabel}\n${perMarker}${isActive ? '' : '\n\n(не влияет на текущий вид)'}`}>
+                  <span className="map-fault-dot" />
+                  <span className="map-fault-label">{f.label} · {cutLabel}</span>
                   <span className="map-fault-throw">{t == null ? '—' : `${Math.round(Math.abs(t))} м`}</span>
                   <button className="map-fault-del" title="Удалить разлом" onClick={() => removeFault(f.id)}>×</button>
                 </div>
@@ -653,7 +685,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             ? 'Кликайте по карте, чтобы поставить точки контура выклинивания'
             : 'Кликайте по карте, чтобы поставить точки трассы разлома'}</span>
           <b>{(drawingPinch ? pinchPts.length : draftFault.length)} точ.</b>
-          <button className="map-draw-btn on" disabled={drawingPinch ? pinchPts.length < 3 : (draftFault.length < 2 || !draftFaultMarkerId)}
+          <button className="map-draw-btn on" disabled={drawingPinch ? pinchPts.length < 3 : (draftFault.length < 2 || draftFaultMarkerIds.length === 0)}
             onClick={drawingPinch ? finishPinchDraw : finishFaultDraw}>Готово</button>
           <button className="map-draw-btn" onClick={drawingPinch ? cancelPinchDraw : cancelFaultDraw}>Отмена</button>
         </div>

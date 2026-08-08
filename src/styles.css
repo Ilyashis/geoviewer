@@ -755,6 +755,10 @@ body {
 .map-fault-add:disabled { color: var(--text-3); cursor: not-allowed; }
 .map-fault-empty { font-size: 12px; color: var(--text-3); }
 .map-fault-marker-pick { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--hairline); }
+.map-fault-pick-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.map-fault-pick-h span { font-size: 10px; font-family: var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.map-fault-all { border: 0; background: transparent; color: var(--text-3); font-size: 11px; cursor: pointer; padding: 0 2px; }
+.map-fault-all:hover { color: var(--warn, #ff9f0a); }
 .map-fault-row { display: flex; align-items: center; gap: 7px; padding: 4px 0; font-size: 12px; }
 .map-fault-row.inactive { opacity: 0.42; }
 .map-fault.inactive { opacity: 0.35; }
