@@ -1,5 +1,8 @@
 /** Inverse-distance-weighted gridding of scattered (x, y, z) control points. */
 
+import type { Pt } from './polygon';
+import { sameFaultBlock } from './fault';
+
 export interface ControlPoint { x: number; y: number; z: number }
 
 export interface Grid {
@@ -18,17 +21,23 @@ export interface Grid {
  * IDW interpolation onto a regular grid over [minX,maxX] × [minY,maxY].
  * Cell (i,j) center maps to data coords; weight = 1/d^power. A cell that lands
  * on a control point takes that point's value exactly.
+ *
+ * With `faultTraces`, a cell only draws from control points on its OWN side of
+ * every trace — the grid doesn't smooth across a fault, so the surface steps
+ * instead of blending through the discontinuity.
  */
 export function idwGrid(
   points: ControlPoint[],
   minX: number, maxX: number, minY: number, maxY: number,
   nx: number, ny: number, power = 2,
+  faultTraces?: Pt[][],
 ): Grid {
   const dx = nx > 1 ? (maxX - minX) / (nx - 1) : 0;
   const dy = ny > 1 ? (maxY - minY) / (ny - 1) : 0;
   const z = new Float64Array(nx * ny);
   let zmin = Infinity;
   let zmax = -Infinity;
+  const faulted = faultTraces && faultTraces.length > 0;
 
   for (let j = 0; j < ny; j++) {
     const cy = minY + j * dy;
@@ -38,6 +47,7 @@ export function idwGrid(
       let den = 0;
       let exact = NaN;
       for (const p of points) {
+        if (faulted && !sameFaultBlock({ x: cx, y: cy }, p, faultTraces!)) continue;
         const d2 = (cx - p.x) ** 2 + (cy - p.y) ** 2;
         if (d2 < 1e-9) { exact = p.z; break; }
         const w = 1 / Math.pow(d2, power / 2);

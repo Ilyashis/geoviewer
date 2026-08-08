@@ -3,6 +3,7 @@ import { Navigation } from 'lucide-react';
 import type { Marker, Well } from '../types';
 import { contourLevels } from '../core/geom/grid';
 import type { Pt } from '../core/geom/polygon';
+import { estimateThrow } from '../core/geom/fault';
 import { buildSurface, type ControlPoint } from '../core/framework';
 import { tvdss } from '../core/crs';
 import { useStore } from '../store';
@@ -27,6 +28,7 @@ const PAD = 64;
 type Mode = 'structure' | 'isochore';
 
 interface Pos { id: string; name: string; x: number; y: number }
+interface FaultDef { id: string; label: string; trace: Pt[] }
 
 /** Two-hue ramp, low→high value. */
 const RAMP: [number, number, number][] = [
@@ -65,6 +67,11 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const [pinchPts, setPinchPts] = useState<Pt[]>([]);
   const [drawingPinch, setDrawingPinch] = useState(false);
   const pinchDragRef = useRef<number | null>(null);
+  const [faults, setFaults] = useState<FaultDef[]>([]);
+  const [draftFault, setDraftFault] = useState<Pt[]>([]);
+  const [drawingFault, setDrawingFault] = useState(false);
+  const faultDragRef = useRef<{ faultId: string; idx: number } | null>(null);
+  const faultSeqRef = useRef(0);
   const [uncOn, setUncOn] = useState(false);
   const [spread, setSpread] = useState(20);
 
@@ -179,12 +186,17 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     return { minX, maxX, minY, maxY, nx, ny };
   }, [layout]);
 
+  // Fault traces block interpolation across them (see buildSurface) — applies to
+  // whichever surface/zone is currently gridded, structural offsets carrying
+  // through to isochore/OWC too since they share this mesh.
+  const faultTraces = useMemo(() => faults.map((f) => f.trace), [faults]);
+
   // The mapped field, built through the structural-framework service: the map
   // consumes a Surface rather than gridding raw picks itself. Well picks are the
   // control-point source today; seismic horizons can feed the same service later.
   const builtSurface = useMemo(
-    () => (field && gridGeom ? buildSurface(field.points, gridGeom) : null),
-    [field, gridGeom],
+    () => (field && gridGeom ? buildSurface(field.points, gridGeom, faultTraces) : null),
+    [field, gridGeom, faultTraces],
   );
   const grid = builtSurface?.grid ?? null;
 
@@ -198,8 +210,8 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       const pos = posAt(w, md);
       controls.push({ x: pos.x, y: pos.y, z: tvdssAt(w, md) });
     }
-    return buildSurface(controls, gridGeom)?.grid ?? null;
-  }, [mode, top, coordWells, gridGeom, trajs]);
+    return buildSurface(controls, gridGeom, faultTraces)?.grid ?? null;
+  }, [mode, top, coordWells, gridGeom, trajs, faultTraces]);
 
   const contact = useMemo<Contact | undefined>(
     () => (owcOn && topGrid && owc > 0 ? { owc, top: topGrid } : undefined),
@@ -343,35 +355,71 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     triggerDownload(`reserves-${fileStamp()}.pdf`, URL.createObjectURL(jpegToPdf(img.dataUrl, img.width, img.height)), true);
   };
 
+  // Apparent throw per fault, derived from whichever field is currently mapped
+  // (structure TVDSS or isochore thickness) — not a typed-in number.
+  const faultThrows = useMemo(() => {
+    const m: Record<string, number | null> = {};
+    if (!field) return m;
+    for (const f of faults) m[f.id] = estimateThrow(f.trace, field.points);
+    return m;
+  }, [faults, field]);
+
   // --- Pinch-out polygon: click-to-place vertices, then drag any of them ---
   // Checking the box keeps an already-drawn polygon (like the ВНК depth persists
   // when its checkbox is toggled) — only an empty polygon prompts a fresh draw.
   const togglePinchOn = (checked: boolean) => {
     setPinchOn(checked);
-    setDrawingPinch(checked && pinchPts.length < 3);
+    const startDrawing = checked && pinchPts.length < 3;
+    setDrawingPinch(startDrawing);
+    if (startDrawing) { setDrawingFault(false); setDraftFault([]); } // only one draw session at a time
   };
-  const redrawPinch = () => { setDrawingPinch(true); setPinchPts([]); };
+  const redrawPinch = () => { setDrawingPinch(true); setPinchPts([]); setDrawingFault(false); setDraftFault([]); };
   const finishPinchDraw = () => setDrawingPinch(false);
   const cancelPinchDraw = () => { setDrawingPinch(false); setPinchOn(false); setPinchPts([]); };
 
+  // --- Faults: an open trace (≥2 vertices) per fault, same click/drag pattern ---
+  const startFaultDraw = () => { setDrawingFault(true); setDraftFault([]); setDrawingPinch(false); };
+  const finishFaultDraw = () => {
+    if (draftFault.length < 2) return;
+    faultSeqRef.current += 1;
+    setFaults((fs) => [...fs, { id: `fault-${faultSeqRef.current}`, label: `Разлом ${faultSeqRef.current}`, trace: draftFault }]);
+    setDrawingFault(false);
+    setDraftFault([]);
+  };
+  const cancelFaultDraw = () => { setDrawingFault(false); setDraftFault([]); };
+  const removeFault = (id: string) => setFaults((fs) => fs.filter((f) => f.id !== id));
+
   const svgDown = (e: ReactPointerEvent<SVGSVGElement>) => {
-    if (!drawingPinch || !layout) return;
+    if (!layout) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    setPinchPts((pts) => [...pts, layout.fromPx(e.clientX - rect.left, e.clientY - rect.top)]);
+    const pt = layout.fromPx(e.clientX - rect.left, e.clientY - rect.top);
+    if (drawingPinch) { setPinchPts((pts) => [...pts, pt]); return; }
+    if (drawingFault) { setDraftFault((pts) => [...pts, pt]); return; }
   };
   const vertexDown = (i: number) => (e: ReactPointerEvent<SVGCircleElement>) => {
     e.stopPropagation();
     pinchDragRef.current = i;
     e.currentTarget.setPointerCapture(e.pointerId);
   };
+  const faultVertexDown = (faultId: string, idx: number) => (e: ReactPointerEvent<SVGCircleElement>) => {
+    e.stopPropagation();
+    faultDragRef.current = { faultId, idx };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
   const svgMove = (e: ReactPointerEvent<SVGSVGElement>) => {
-    if (pinchDragRef.current == null || !layout) return;
+    if (!layout) return;
+    if (pinchDragRef.current == null && faultDragRef.current == null) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pt = layout.fromPx(e.clientX - rect.left, e.clientY - rect.top);
-    const idx = pinchDragRef.current;
-    setPinchPts((pts) => pts.map((p, k) => (k === idx ? pt : p)));
+    if (pinchDragRef.current != null) {
+      const idx = pinchDragRef.current;
+      setPinchPts((pts) => pts.map((p, k) => (k === idx ? pt : p)));
+    } else if (faultDragRef.current != null) {
+      const { faultId, idx } = faultDragRef.current;
+      setFaults((fs) => fs.map((f) => (f.id === faultId ? { ...f, trace: f.trace.map((p, k) => (k === idx ? pt : p)) } : f)));
+    }
   };
-  const svgUp = () => { pinchDragRef.current = null; };
+  const svgUp = () => { pinchDragRef.current = null; faultDragRef.current = null; };
 
   if (wells.length === 0) {
     return (
@@ -411,6 +459,10 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const pinchClosed = pinchOn && pinchPts.length >= 3;
   const pinchOutline = pinchScreenPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`).join(' ') + (pinchClosed ? ' Z' : '');
 
+  const toPath = (pts: { px: number; py: number }[]) => pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`).join(' ');
+  const faultScreenTraces = layout ? faults.map((f) => ({ id: f.id, pts: f.trace.map((p) => layout.toPx(p.x, p.y)) })) : [];
+  const draftFaultScreenPts = layout ? draftFault.map((p) => layout.toPx(p.x, p.y)) : [];
+
   const SurfBtns = ({ selId, onSel }: { selId: string | undefined; onSel: (id: string) => void }) => (
     <>
       {mappable.map((m) => (
@@ -425,7 +477,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     <div className="map" ref={wrapRef}>
       <canvas ref={canvasRef} className="map-canvas" style={{ width: size.w, height: size.h }} />
       <svg className="map-svg" width={size.w} height={size.h}
-        style={{ cursor: drawingPinch ? 'crosshair' : undefined }}
+        style={{ cursor: drawingPinch || drawingFault ? 'crosshair' : undefined }}
         onPointerDown={svgDown} onPointerMove={svgMove} onPointerUp={svgUp}>
         {pinchOn && pinchScreenPts.length > 0 && (
           <g className="map-pinch">
@@ -439,6 +491,17 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
               <circle key={i} cx={p.px} cy={p.py} r={6} className="map-pinch-vertex" onPointerDown={vertexDown(i)} />
             ))}
           </g>
+        )}
+        {faultScreenTraces.map(({ id, pts }) => (
+          <g key={id} className="map-fault">
+            <path d={toPath(pts)} fill="none" className="map-fault-line" />
+            {pts.map((p, i) => (
+              <circle key={i} cx={p.px} cy={p.py} r={6} className="map-fault-vertex" onPointerDown={faultVertexDown(id, i)} />
+            ))}
+          </g>
+        ))}
+        {drawingFault && draftFaultScreenPts.length > 0 && (
+          <path d={toPath(draftFaultScreenPts)} fill="none" className="map-fault-line draft" />
         )}
         {pts.length > 1 && (
           <path d={path} fill="none" stroke="var(--accent)" strokeWidth={2} strokeOpacity={0.75}
@@ -499,14 +562,41 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
         </div>
       )}
 
+      {mappable.length > 0 && (
+        <div className="map-fault-panel">
+          <div className="map-fault-head">
+            <span>Разломы</span>
+            <button className="map-fault-add" disabled={drawingFault} onClick={startFaultDraw}>+ разлом</button>
+          </div>
+          {faults.length === 0 ? (
+            <div className="map-fault-empty">Нет разломов</div>
+          ) : (
+            faults.map((f) => {
+              const t = faultThrows[f.id];
+              return (
+                <div key={f.id} className="map-fault-row">
+                  <span className="map-fault-dot" />
+                  <span className="map-fault-label">{f.label}</span>
+                  <span className="map-fault-throw">{t == null ? '—' : `${Math.round(Math.abs(t))} м`}</span>
+                  <button className="map-fault-del" title="Удалить разлом" onClick={() => removeFault(f.id)}>×</button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
       <div className="map-north"><Navigation size={16} strokeWidth={1.9} /> С</div>
 
-      {drawingPinch && (
+      {(drawingPinch || drawingFault) && (
         <div className="map-draw-hint">
-          <span>Кликайте по карте, чтобы поставить точки контура выклинивания</span>
-          <b>{pinchPts.length} точ.</b>
-          <button className="map-draw-btn on" disabled={pinchPts.length < 3} onClick={finishPinchDraw}>Готово</button>
-          <button className="map-draw-btn" onClick={cancelPinchDraw}>Отмена</button>
+          <span>{drawingPinch
+            ? 'Кликайте по карте, чтобы поставить точки контура выклинивания'
+            : 'Кликайте по карте, чтобы поставить точки трассы разлома'}</span>
+          <b>{(drawingPinch ? pinchPts.length : draftFault.length)} точ.</b>
+          <button className="map-draw-btn on" disabled={drawingPinch ? pinchPts.length < 3 : draftFault.length < 2}
+            onClick={drawingPinch ? finishPinchDraw : finishFaultDraw}>Готово</button>
+          <button className="map-draw-btn" onClick={drawingPinch ? cancelPinchDraw : cancelFaultDraw}>Отмена</button>
         </div>
       )}
 
@@ -521,6 +611,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             <div className="map-leg-row"><span className="map-leg-line" /> профиль · изолинии</div>
             {contact && <div className="map-leg-row"><span className="map-leg-owc" /> ВНК {Math.round(owc)} м</div>}
             {pinchClip && <div className="map-leg-row"><span className="map-leg-pinch" /> выклинивание ({pinchClip.length} верш.)</div>}
+            {faults.length > 0 && <div className="map-leg-row"><span className="map-leg-fault" /> разлом{faults.length > 1 ? 'ов' : ''} ({faults.length})</div>}
             {anyDeviated && <div className="map-leg-row"><span className="map-leg-dev" /> накл. ствол → снос/TVDSS</div>}
             {seismicControls && seismicControls.length > 0 && (
               <div className="map-leg-row"><span className="map-leg-seis" /> сейсмо-горизонт ({seismicControls.length} тчк{seismicLines.length > 1 ? `, ${seismicLines.length} лин.` : ''})</div>

@@ -1,4 +1,5 @@
 import { idwGrid, type Grid, type ControlPoint } from '../geom/grid';
+import type { Pt } from '../geom/polygon';
 
 /**
  * Structural framework — the integration point of the geological model.
@@ -34,10 +35,13 @@ export interface Surface {
 /**
  * Interpolate control points onto the mesh (IDW). Returns null when
  * under-constrained (fewer than 3 points), matching the mappability rule.
+ *
+ * `faultTraces` — optional fault lines that block interpolation across them
+ * (see `idwGrid`), so the surface steps at a fault instead of smoothing over it.
  */
-export function buildSurface(controls: ControlPoint[], mesh: Mesh): Surface | null {
+export function buildSurface(controls: ControlPoint[], mesh: Mesh, faultTraces?: Pt[][]): Surface | null {
   if (controls.length < 3) return null;
-  const grid = idwGrid(controls, mesh.minX, mesh.maxX, mesh.minY, mesh.maxY, mesh.nx, mesh.ny);
+  const grid = idwGrid(controls, mesh.minX, mesh.maxX, mesh.minY, mesh.maxY, mesh.nx, mesh.ny, 2, faultTraces);
   let zmin = Infinity, zmax = -Infinity;
   for (const c of controls) {
     if (c.z < zmin) zmin = c.z;

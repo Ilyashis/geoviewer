@@ -28,6 +28,22 @@ describe('idwGrid', () => {
       expect(g.z[k]).toBeLessThanOrEqual(150 + 1e-6);
     }
   });
+
+  it('a fault trace stops interpolation blending across it', () => {
+    const pts = [{ x: 1, y: 1, z: 100 }, { x: 9, y: 1, z: 200 }];
+    const trace = [{ x: 5, y: -10 }, { x: 5, y: 10 }];
+    const kAt = (i: number, j: number) => j * 11 + i; // nx=11
+    const noFault = idwGrid(pts, 0, 10, 0, 2, 11, 3);
+    const faulted = idwGrid(pts, 0, 10, 0, 2, 11, 3, 2, [trace]);
+
+    // Without a fault, a cell on the left still leans toward the right point.
+    expect(noFault.z[kAt(4, 1)]).toBeGreaterThan(110);
+    // With the fault, that same cell only ever sees the left point.
+    expect(faulted.z[kAt(4, 1)]).toBeCloseTo(100, 3);
+    // Symmetric on the other side.
+    expect(noFault.z[kAt(6, 1)]).toBeLessThan(190);
+    expect(faulted.z[kAt(6, 1)]).toBeCloseTo(200, 3);
+  });
 });
 
 describe('contourLevels', () => {
