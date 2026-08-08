@@ -586,7 +586,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
         </div>
       )}
 
-      <div className="map-north"><Navigation size={16} strokeWidth={1.9} /> С</div>
+      <div className={`map-north ${volResult && field ? 'aside' : ''}`}><Navigation size={16} strokeWidth={1.9} /> С</div>
 
       {(drawingPinch || drawingFault) && (
         <div className="map-draw-hint">
