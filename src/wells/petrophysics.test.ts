@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { vshaleFromGR, densityPorosity, archieSw, zoneStats, aggregateZone, DEFAULT_PETRO } from './petrophysics';
+import { vshaleFromGR, densityPorosity, archieSw, zoneStats, aggregateZone, pickCurves, sonicPorosity, DEFAULT_PETRO } from './petrophysics';
 import type { Well } from '../types';
 
 describe('petrophysics primitives', () => {
@@ -64,5 +64,82 @@ describe('aggregateZone', () => {
     expect(agg.wellsUsed).toBe(2);
     expect(agg.ng).toBeCloseTo(0.4, 6);
     expect(agg.phi).toBeGreaterThan(0.1);
+  });
+});
+
+describe('pickCurves: русские мнемоники и враньё в подписях единиц', () => {
+  const curve = (mnemonic: string, unit: string, values: number[]) => ({ mnemonic, unit, description: '', values });
+  const wellWith = (...curves: ReturnType<typeof curve>[]): Well => ({
+    id: 'w', name: 'W', depth: curves[0].values.map((_, i) => 2000 + i * 0.5),
+    depthUnit: 'M', lithology: [], header: {}, curves,
+  });
+
+  it('распознаёт ГК/БК (латиницей и кириллицей)', () => {
+    const lat = pickCurves(wellWith(curve('GK', 'gAPI', [5]), curve('BK', 'ohm.m', [20])));
+    expect(lat.gr?.mnemonic).toBe('GK');
+    expect(lat.res?.mnemonic).toBe('BK');
+
+    const cyr = pickCurves(wellWith(curve('ГК', 'мкР/ч', [5]), curve('БК', 'Ом·м', [20])));
+    expect(cyr.gr?.mnemonic).toBe('ГК');
+    expect(cyr.res?.mnemonic).toBe('БК');
+  });
+
+  it('предпочитает глубинный БК микробоковому МБК', () => {
+    // МБК читает промытую зону — по нему Sw вышла бы заниженной.
+    const p = pickCurves(wellWith(curve('MBK', 'ohm.m', [12]), curve('BK', 'ohm.m', [20])));
+    expect(p.res?.mnemonic).toBe('BK');
+  });
+
+  it('берёт МБК, только если глубинного нет', () => {
+    expect(pickCurves(wellWith(curve('MBK', 'ohm.m', [12]))).res?.mnemonic).toBe('MBK');
+  });
+
+  it('не принимает ГГК за ГК', () => {
+    const p = pickCurves(wellWith(curve('ГГКП', 'г/см3', [2.4]), curve('ГК', 'мкР/ч', [5])));
+    expect(p.gr?.mnemonic).toBe('ГК');
+    expect(p.phiMethod).toBe('density'); // ГГКП ушёл в плотность
+  });
+
+  it('ОТВЕРГАЕТ «пористость», которая физически невозможна', () => {
+    // Ровно случай реального НКТ: подписан m3/m3, а значения до 3.5.
+    const p = pickCurves(wellWith(
+      curve('GK', 'gAPI', [5]), curve('BK', 'ohm.m', [20]),
+      curve('NKT', 'm3/m3', [0.6, 1.0, 1.7, 2.6, 3.5]),
+    ));
+    expect(p.phiMethod).not.toBe('direct'); // 166% пористости не бывает
+    expect(p.phiMethod).toBe('none');       // других источников нет
+  });
+
+  it('принимает пористость, когда она правда доля', () => {
+    const p = pickCurves(wellWith(
+      curve('GK', 'gAPI', [5]), curve('BK', 'ohm.m', [20]),
+      curve('NPHI', 'v/v', [0.05, 0.12, 0.2, 0.28]),
+    ));
+    expect(p.phiMethod).toBe('direct');
+  });
+
+  it('распознаёт акустику в мкс/м, даже когда подписана us/ft', () => {
+    const p = pickCurves(wellWith(
+      curve('GK', 'gAPI', [5]), curve('BK', 'ohm.m', [20]),
+      curve('DT', 'us/ft', [230, 250, 278, 300]), // в us/ft дало бы φ>1
+    ));
+    expect(p.phiMethod).toBe('sonic');
+    expect(p.dtRescaled).toBe(true);
+  });
+
+  it('не трогает акустику, которая действительно в us/ft', () => {
+    const p = pickCurves(wellWith(
+      curve('GK', 'gAPI', [5]), curve('BK', 'ohm.m', [20]),
+      curve('DT', 'us/ft', [60, 75, 90, 110]),
+    ));
+    expect(p.dtRescaled).toBe(false);
+  });
+});
+
+describe('sonicPorosity', () => {
+  it('даёт правдоподобную пористость для песчаника по Уилли', () => {
+    expect(sonicPorosity(90, 55.5, 189)).toBeCloseTo(0.258, 3);
+    expect(sonicPorosity(55.5, 55.5, 189)).toBe(0);   // матрица → 0
+    expect(sonicPorosity(40, 55.5, 189)).toBe(0);     // плотнее матрицы → 0, не отрицательная
   });
 });

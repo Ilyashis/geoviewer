@@ -28,6 +28,14 @@ interface Props {
 const PAD = 64;
 type Mode = 'structure' | 'isochore';
 
+/** Как получена пористость — показываем, чтобы цифра не была чёрным ящиком. */
+const PHI_METHOD_RU: Record<string, string> = {
+  density: 'по плотностному каротажу',
+  sonic: 'по акустике (Уилли)',
+  direct: 'готовая кривая пористости',
+  none: 'разными методами по скважинам',
+};
+
 interface Pos { id: string; name: string; x: number; y: number }
 /** A fault trace and the пласты its plane cuts (usually all of them). */
 interface FaultDef { id: string; label: string; markerIds: string[]; trace: Pt[] }
@@ -731,6 +739,9 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
                 <VolRow k="φ · пористость (нетто)" v={logStats.phi.toFixed(3)} />
                 <VolRow k="Sw · водонасыщ. (нетто)" v={logStats.sw.toFixed(2)} />
                 <VolRow k="Скважин в зоне" v={String(logStats.wellsUsed)} />
+              </div>
+              <div className="vol-note">
+                {`φ — ${PHI_METHOD_RU[logStats.phiMethod]}`}{logStats.curves ? ` · кривые: ${logStats.curves}` : ''}
               </div>
               <div className="vol-params cols3">
                 <VolInput label="Vsh отс." value={petro.vshCut} step={0.05} onChange={(v) => setPetro({ ...petro, vshCut: v })} />
