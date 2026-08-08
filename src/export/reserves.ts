@@ -9,6 +9,8 @@ export interface ReservesInput {
   params: { ng: number; phi: number; sw: number; bo: number; rf: number };
   owc: number | null;
   pinchoutVertices: number | null;
+  faultCount: number | null;
+  faultMaxThrow: number | null;
   det: VolResult;
   mc: McResult | null;
   spreadPct?: number;
@@ -43,6 +45,10 @@ export function buildReservesCsv(r: ReservesInput): string {
   row('ККИН', trim(r.params.rf, 3));
   if (r.owc != null) row('ВНК', int(r.owc), 'м');
   if (r.pinchoutVertices != null) row('Полигон выклинивания', r.pinchoutVertices, 'вершин');
+  if (r.faultCount != null) {
+    row('Разломы', r.faultCount, 'шт.');
+    if (r.faultMaxThrow != null) row('Макс. сброс', int(r.faultMaxThrow), 'м');
+  }
   row('');
   row('Показатель', 'Значение', 'Ед.');
   row(r.owc != null ? 'Площадь в ВНК' : 'Площадь', trim(r.det.areaKm2, 3), 'км²');
@@ -95,6 +101,10 @@ function buildOps(r: ReservesInput): Op[] {
   ];
   if (r.owc != null) ops.push({ t: 'row', k: 'ВНК · контакт', v: `${Math.round(r.owc)} м` });
   if (r.pinchoutVertices != null) ops.push({ t: 'row', k: 'Полигон выклинивания', v: `${r.pinchoutVertices} вершин` });
+  if (r.faultCount != null) {
+    ops.push({ t: 'row', k: 'Разломы', v: `${r.faultCount} шт.` });
+    if (r.faultMaxThrow != null) ops.push({ t: 'row', k: 'Макс. сброс', v: `${Math.round(r.faultMaxThrow)} м` });
+  }
   ops.push(
     { t: 'gap', h: 8 }, { t: 'div' }, { t: 'gap', h: 8 },
     { t: 'head', s: 'Результат' },

@@ -316,6 +316,22 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     [pinchOn, pinchPts],
   );
 
+  // Apparent throw per fault, derived from whichever field is currently mapped
+  // (structure TVDSS or isochore thickness) — not a typed-in number. Faults
+  // already shape `grid` itself (buildSurface got faultTraces), so volResult
+  // below reflects them; this is only the reporting summary.
+  const faultThrows = useMemo(() => {
+    const m: Record<string, number | null> = {};
+    if (!field) return m;
+    for (const f of faults) m[f.id] = estimateThrow(f.trace, field.points);
+    return m;
+  }, [faults, field]);
+  const faultSummary = useMemo(() => {
+    if (faults.length === 0) return null;
+    const throws = faults.map((f) => faultThrows[f.id]).filter((t): t is number => t != null).map(Math.abs);
+    return { count: faults.length, maxThrow: throws.length ? Math.max(...throws) : null };
+  }, [faults, faultThrows]);
+
   const volResult = useMemo(
     () => (mode === 'isochore' && grid ? volumetrics(grid, effVol, contact, pinchClip) : null),
     [mode, grid, effVol, contact, pinchClip],
@@ -337,6 +353,8 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       params: effVol,
       owc: contact ? owc : null,
       pinchoutVertices: pinchClip ? pinchClip.length : null,
+      faultCount: faultSummary?.count ?? null,
+      faultMaxThrow: faultSummary?.maxThrow ?? null,
       det: volResult,
       mc,
       spreadPct: uncOn ? spread : undefined,
@@ -354,15 +372,6 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     const img = renderReservesJpeg(r);
     triggerDownload(`reserves-${fileStamp()}.pdf`, URL.createObjectURL(jpegToPdf(img.dataUrl, img.width, img.height)), true);
   };
-
-  // Apparent throw per fault, derived from whichever field is currently mapped
-  // (structure TVDSS or isochore thickness) — not a typed-in number.
-  const faultThrows = useMemo(() => {
-    const m: Record<string, number | null> = {};
-    if (!field) return m;
-    for (const f of faults) m[f.id] = estimateThrow(f.trace, field.points);
-    return m;
-  }, [faults, field]);
 
   // --- Pinch-out polygon: click-to-place vertices, then drag any of them ---
   // Checking the box keeps an already-drawn polygon (like the ВНК depth persists
@@ -700,6 +709,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
               const clips: string[] = [];
               if (contact) clips.push(`только порода выше ВНК ${Math.round(owc)} м`);
               if (pinchClip) clips.push(`в пределах контура выклинивания (${pinchClip.length} верш.)`);
+              if (faultSummary) clips.push(`гриддинг с учётом ${faultSummary.count} разл.${faultSummary.maxThrow != null ? ` (макс. сброс ~${Math.round(faultSummary.maxThrow)} м)` : ''}`);
               return clips.length
                 ? `${clips.join(' · ')} · замыкание не учитывается.`
                 : 'Интеграл по всей площади карты · без учёта контакта.';

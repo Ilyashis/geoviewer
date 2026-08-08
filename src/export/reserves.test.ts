@@ -10,7 +10,8 @@ const det: VolResult = {
 const base: ReservesInput = {
   zone: 'Top A–KP S8', source: 'logs', wellCount: 6, logWells: 6,
   params: { ng: 0.39, phi: 0.158, sw: 0.5, bo: 1.2, rf: 0.3 },
-  owc: 2067, pinchoutVertices: null, det, mc: null, date: '2026-08-07 02:10',
+  owc: 2067, pinchoutVertices: null, faultCount: null, faultMaxThrow: null,
+  det, mc: null, date: '2026-08-07 02:10',
 };
 
 describe('buildReservesCsv', () => {
@@ -35,6 +36,18 @@ describe('buildReservesCsv', () => {
   it('includes the pinch-out polygon vertex count when applied', () => {
     const csv = buildReservesCsv({ ...base, pinchoutVertices: 5 });
     expect(csv).toContain('Полигон выклинивания,5,вершин');
+  });
+
+  it('includes fault count and max throw when faults are present', () => {
+    const csv = buildReservesCsv({ ...base, faultCount: 2, faultMaxThrow: 34.2 });
+    expect(csv).toContain('Разломы,2,шт.');
+    expect(csv).toContain('Макс. сброс,34,м');
+  });
+
+  it('reports the fault count alone when no throw could be estimated', () => {
+    const csv = buildReservesCsv({ ...base, faultCount: 1, faultMaxThrow: null });
+    expect(csv).toContain('Разломы,1,шт.');
+    expect(csv).not.toContain('Макс. сброс');
   });
 
   it('appends the P90/P50/P10 block when Monte-Carlo is present', () => {
