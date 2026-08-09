@@ -26,3 +26,47 @@ describe('loadDemoField', () => {
     expect(useStore.getState().wells).toHaveLength(3);
   });
 });
+
+describe('importWellKb', () => {
+  beforeEach(() => {
+    useStore.getState().clearAll();
+    useStore.getState().loadDemoField(2);
+  });
+
+  const wellNamed = (name: string) => useStore.getState().wells.find((w) => w.name === name)!;
+
+  it('применяет альтитуду, не трогая координаты', () => {
+    const before = wellNamed('UT-1058');
+    const r = useStore.getState().importWellKb([{ well: 'UT-1058', kb: 142.5 }]);
+
+    expect(r.wells).toBe(1);
+    const after = wellNamed('UT-1058');
+    expect(after.kb).toBeCloseTo(142.5, 6);
+    // Инклинометрия не несёт координат — импорт альтитуды не должен их обнулять.
+    expect([after.x, after.y]).toEqual([before.x, before.y]);
+  });
+
+  it('не задевает остальные скважины', () => {
+    useStore.getState().importWellKb([{ well: 'UT-1058', kb: 142.5 }]);
+    expect(wellNamed('UT-1059').kb).toBeUndefined();
+  });
+
+  it('сообщает о замене прежней альтитуды', () => {
+    useStore.getState().importWellKb([{ well: 'UT-1058', kb: 100 }]);
+    const r = useStore.getState().importWellKb([{ well: 'UT-1058', kb: 142.5 }]);
+
+    // Отметка меняет все карты TVDSS, поэтому подмена не должна быть тихой.
+    expect(r.replaced).toEqual([{ well: 'UT-1058', was: 100 }]);
+    expect(wellNamed('UT-1058').kb).toBeCloseTo(142.5, 6);
+  });
+
+  it('не считает заменой повторную запись того же значения', () => {
+    useStore.getState().importWellKb([{ well: 'UT-1058', kb: 142.5 }]);
+    expect(useStore.getState().importWellKb([{ well: 'UT-1058', kb: 142.5 }]).replaced).toEqual([]);
+  });
+
+  it('возвращает скважины, которых нет в проекте', () => {
+    const r = useStore.getState().importWellKb([{ well: 'НЕТ-1', kb: 10 }]);
+    expect(r).toMatchObject({ wells: 0, unmatchedWells: ['НЕТ-1'] });
+  });
+});

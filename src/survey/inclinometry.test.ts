@@ -148,8 +148,17 @@ describe('parseSurveyAny', () => {
     expect(r.note).toContain('истинный');
   });
 
-  it('сообщает об альтитуде, найденной в шапке', () => {
-    expect(parseSurveyAny(REPORT, 'report.csv').kb).toBeCloseTo(12.5, 6);
+  it('привязывает альтитуду из шапки к скважине файла', () => {
+    expect(parseSurveyAny(REPORT, 'report.csv').kb).toEqual({ well: 'T-1', value: 12.5 });
+  });
+
+  it('не приписывает альтитуду из преамбулы, когда скважин в файле несколько', () => {
+    // Отметка в преамбуле не говорит, к какой из скважин она относится, —
+    // применить её ко всем значило бы выдумать данные.
+    const many = 'Альтитуда точки отсчета;15,000m над уровнем моря\n' + SUMMARY;
+    const r = parseSurveyAny(many, 'СВОД.csv');
+    expect(r.rows).toHaveLength(6);
+    expect(r.kb).toBeUndefined();
   });
 
   it('падает с внятной ошибкой, когда колонок нет вовсе', () => {

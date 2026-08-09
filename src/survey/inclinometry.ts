@@ -331,7 +331,13 @@ export interface SurveyImportResult {
   rows: SurveyRow[];
   /** What the import actually did, for the summary line. */
   note: string;
-  kb?: number;
+  /**
+   * Depth reference elevation and the well it belongs to. The elevation sits in
+   * the file's preamble, which says nothing about which well it describes, so
+   * it is only attributed when the file turns out to hold exactly one — on a
+   * multi-well summary the same number would be applied to all of them.
+   */
+  kb?: { well: string; value: number };
 }
 
 /**
@@ -349,5 +355,10 @@ export function parseSurveyAny(text: string, fileName?: string): SurveyImportRes
 
   const fallbackWell = fileName?.replace(/\.[^.]+$/, '');
   const p = parseInclinometry(text, fallbackWell);
-  return { rows: p.rows, note: `азимут ${p.azimuth}, скважина: ${p.columns.well}`, kb: p.kb };
+  const named = [...new Set(p.rows.map((r) => r.well))];
+  return {
+    rows: p.rows,
+    note: `азимут ${p.azimuth}, скважина: ${p.columns.well}`,
+    kb: p.kb !== undefined && named.length === 1 ? { well: named[0], value: p.kb } : undefined,
+  };
 }

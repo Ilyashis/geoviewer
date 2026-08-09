@@ -40,6 +40,7 @@ export function ImportModal({ onClose }: Props) {
   const importLithology = useStore((s) => s.importLithology);
   const importSurveys = useStore((s) => s.importSurveys);
   const importWellHeads = useStore((s) => s.importWellHeads);
+  const importWellKb = useStore((s) => s.importWellKb);
   const [kind, setKind] = useState<Kind>('tops');
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -92,9 +93,20 @@ export function ImportModal({ onClose }: Props) {
         const { rows, note, kb } = parseSurveyAny(text, fileName);
         if (rows.length === 0) { setError('Нет валидных строк со станциями.'); return; }
         const r = importSurveys(rows);
-        const alt = kb !== undefined ? `, альтитуда в шапке ${kb.toFixed(2)} м` : '';
+
+        // The elevation named in the file header is applied too — for many
+        // wells it is the only place a depth datum appears at all.
+        const k = kb ? importWellKb([{ well: kb.well, kb: kb.value }]) : null;
+        const alt = k?.wells ? `, альтитуда ${kb!.value.toFixed(2)} м` : '';
         setSummary(`Импортировано: ${r.stations} станций в ${r.wells} скважин (${note})${alt}.`);
-        if (r.unmatchedWells.length) setWarn(`Не найдены скважины: ${r.unmatchedWells.join(', ')}`);
+
+        const warns: string[] = [];
+        if (r.unmatchedWells.length) warns.push(`Не найдены скважины: ${r.unmatchedWells.join(', ')}`);
+        // Never change a known datum silently: every TVDSS map moves with it.
+        for (const p of k?.replaced ?? []) {
+          warns.push(`Альтитуда ${p.well} заменена: было ${p.was.toFixed(2)} м, стало ${kb!.value.toFixed(2)} м`);
+        }
+        if (warns.length) setWarn(warns.join('. '));
       }
     } catch (e) {
       setError((e as Error).message);

@@ -41,6 +41,13 @@ export interface DevImportSummary {
   unmatchedWells: string[];
 }
 
+export interface KbImportSummary {
+  wells: number;
+  /** Wells that already carried a different elevation, now overwritten. */
+  replaced: { well: string; was: number }[];
+  unmatchedWells: string[];
+}
+
 export interface WellsSlice {
   wells: Well[];
   activeWellId: string | null;
@@ -58,6 +65,7 @@ export interface WellsSlice {
   importSurveys: (rows: SurveyRow[]) => SurveyImportSummary;
   importWellHeads: (rows: WellHeadRow[]) => HeadsImportSummary;
   importDevTraces: (traces: ParsedDev[]) => DevImportSummary;
+  importWellKb: (rows: { well: string; kb: number }[]) => KbImportSummary;
 }
 
 export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, get) => ({
@@ -319,5 +327,38 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
 
     set({ wells });
     return { wells: patch.size, withKb, deviated, unmatchedWells: [...unmatched] };
+  },
+
+  /**
+   * Apply a depth-reference elevation on its own, from a file that carries no
+   * coordinates — an inclinometry report names its datum in the preamble and is
+   * often the only place it appears. Kept separate from `importWellHeads`,
+   * which would blank X/Y it has nothing to say about.
+   *
+   * An elevation that was already known is replaced rather than kept, because
+   * the caller asked for this file to be applied — but the previous value is
+   * reported back so the change is never silent.
+   */
+  importWellKb: (rows) => {
+    const state = get();
+    const byName = wellIndex(state.wells);
+    const patch = new Map<string, number>();
+    const unmatched = new Set<string>();
+    for (const r of rows) {
+      const wellId = byName.get(norm(r.well));
+      if (!wellId) { unmatched.add(r.well); continue; }
+      if (Number.isFinite(r.kb)) patch.set(wellId, r.kb);
+    }
+
+    const replaced: { well: string; was: number }[] = [];
+    const wells = state.wells.map((w) => {
+      const kb = patch.get(w.id);
+      if (kb === undefined) return w;
+      if (w.kb !== undefined && Math.abs(w.kb - kb) > 0.01) replaced.push({ well: w.name, was: w.kb });
+      return { ...w, kb };
+    });
+
+    set({ wells });
+    return { wells: patch.size, replaced, unmatchedWells: [...unmatched] };
   },
 });
