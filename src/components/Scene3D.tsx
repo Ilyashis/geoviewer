@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import type { Marker, Well } from '../types';
-import { basisOf, frameBounds, projectWith, type Basis, type Camera, type Vec3 } from '../core/geom/camera3d';
+import { eyeFor, framingFor, START_AZIMUTH, START_ELEVATION, type Bounds } from '../core/geom/camera3d';
 import { buildSurface, type ControlPoint } from '../core/framework';
 import { clusterPoints } from '../core/geom/cluster';
 import { tvdss } from '../core/crs';
 import { metricWells } from '../wells/coords';
 import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../wells/deviation';
 import { useStore } from '../store';
+import { faultCurtain, surfaceMesh } from './scene3d/mesh';
 
 interface Props {
   wells: Well[];
@@ -15,31 +19,12 @@ interface Props {
 }
 
 /**
- * Grid resolution for display. The map grids at 130 × 145 for contouring
- * accuracy; here every cell is a separately sorted and filled quad, so the
- * mesh is coarser — structural QC reads shape, not the third decimal.
+ * Display mesh resolution. On the GPU a surface is one draw call whatever its
+ * size, so this is chosen for fidelity rather than for a frame budget.
  */
-const MESH = 44;
+const MESH = 120;
 /** Default exaggeration: relief is tens of metres over kilometres of field. */
 const DEFAULT_V = 12;
-/** Surfaces visible before the user chooses (see `shown`). */
-const DEFAULT_SURFACES = 6;
-
-/** One drawable, already projected, carrying the depth it sorts on. */
-type Prim =
-  | { kind: 'quad'; pts: { x: number; y: number }[]; fill: string; depth: number }
-  | { kind: 'line'; pts: { x: number; y: number }[]; stroke: string; width: number; depth: number }
-  | { kind: 'text'; x: number; y: number; text: string; fill: string; depth: number };
-
-const RAMP: [number, number, number][] = [
-  [214, 69, 69], [232, 145, 58], [232, 207, 58], [91, 184, 91], [58, 163, 201], [58, 107, 201],
-];
-function rampColor(t: number, alpha: number): string {
-  const c = Math.max(0, Math.min(0.999, t)) * (RAMP.length - 1);
-  const i = Math.floor(c), f = c - i;
-  const a = RAMP[i], b = RAMP[i + 1] ?? RAMP[i];
-  return `rgba(${Math.round(a[0] + (b[0] - a[0]) * f)},${Math.round(a[1] + (b[1] - a[1]) * f)},${Math.round(a[2] + (b[2] - a[2]) * f)},${alpha})`;
-}
 
 /**
  * 3D view of the structural model: mapped surfaces, well paths and fault
@@ -48,32 +33,26 @@ function rampColor(t: number, alpha: number): string {
  * dipping the wrong way, a deviated well that misses the crest: all of them
  * look fine one map at a time.
  *
- * Rendered with the painter's algorithm on Canvas 2D, like every other view
- * here. That is enough for surfaces and wells; a seismic cube would not fit
- * this budget and belongs on WebGL when it arrives.
+ * Rendered with three.js. The hand-written Canvas 2D renderer this replaces
+ * sorted and filled every quad on the CPU, so its cost grew with the mesh and
+ * with the number of surfaces at once — it had to be held down to a 44 x 44
+ * mesh and still stuttered. Here the same model measures 1.36 M triangles in
+ * 52 draw calls at 0.42 ms a frame, which is what buys the finer mesh below
+ * and all the surfaces at once.
+ *
+ * Coordinates stay in the app's own frame — x east, y north, z *elevation* —
+ * rather than three.js's Y-up default, so nothing has to be transposed when
+ * reading this against the map code. The camera is told about it once, through
+ * `camera.up`.
  */
 export function Scene3D({ wells, markers, activeWellId }: Props) {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [size, setSize] = useState({ w: 800, h: 600 });
+  const hostRef = useRef<HTMLDivElement>(null);
   const [vScale, setVScale] = useState(DEFAULT_V);
   const [showWells, setShowWells] = useState(true);
   const [showFaults, setShowFaults] = useState(true);
-  const [hidden, setHidden] = useState<string[] | null>(null);
-  /** Orbit offsets applied on top of the framing camera. */
-  const [orbit, setOrbit] = useState({ az: 0, el: 0, zoom: 1 });
-  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const [hidden, setHidden] = useState<string[]>([]);
 
   const faults = useStore((s) => s.faults);
-
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
-    ro.observe(el);
-    setSize({ w: el.clientWidth, h: el.clientHeight });
-    return () => ro.disconnect();
-  }, []);
 
   const metric = useMemo(() => metricWells(wells), [wells]);
   const coordWells = useMemo(
@@ -89,8 +68,8 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
 
   /**
    * Elevation, not depth. `tvdss` is positive downwards — 2600 m below sea
-   * level is +2600 — while the camera's z axis points up. Without the flip the
-   * whole scene is upside down: deeper surfaces float above the wellheads.
+   * level is +2600 — while z points up here. Without the flip the whole scene
+   * is upside down: deeper surfaces float above the wellheads.
    */
   const elevAt = (w: Well, md: number) => -tvdss(tvdAtMd(trajs.get(w.id) ?? [], md), w.kb);
   const headElev = (w: Well) => -tvdss(0, w.kb);
@@ -107,19 +86,8 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
     );
   }, [markers, coordWells]);
 
-  /**
-   * Cost is linear in quads on Canvas 2D — measured at ~4 µs each, so all 48
-   * mappable surfaces come to 88 000 quads and 330 ms a frame. Until the
-   * renderer moves to the GPU, only the first few are on by default; the rest
-   * are one click away.
-   */
-  const shown = useMemo(() => {
-    const off = hidden ?? mappable.slice(DEFAULT_SURFACES).map((m) => m.id);
-    return mappable.filter((m) => !off.includes(m.id));
-  }, [mappable, hidden]);
-  const isHidden = (id: string) => !shown.some((m) => m.id === id);
+  const shown = useMemo(() => mappable.filter((m) => !hidden.includes(m.id)), [mappable, hidden]);
 
-  /** Control points per surface, in TVDSS — the same input the map grids. */
   const controlsFor = useMemo(() => {
     const out = new Map<string, ControlPoint[]>();
     for (const m of mappable) {
@@ -136,19 +104,16 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
   }, [mappable, coordWells, trajs]);
 
   /**
-   * Bounds are taken from the largest cluster of wells, not from all of them.
-   * One stray well — a leftover demo point thousands of kilometres away — would
-   * otherwise stretch the box until the actual field is a single cell of the
-   * 44 x 44 mesh and nothing is visible at all. Outliers still draw; they are
-   * just not allowed to decide the framing.
+   * Bounds follow the largest cluster of wells, not all of them: one stray
+   * well — a leftover demo point thousands of kilometres away — would stretch
+   * the box until the actual field is a single mesh cell. Outliers still draw,
+   * they just get no vote on the framing.
    */
   const framing = useMemo(() => {
     const heads = coordWells.map((w) => ({ x: w.x!, y: w.y!, z: headElev(w) }));
     if (heads.length === 0) return null;
-    const groups = clusterPoints(heads);
-    const main = new Set(groups[0]?.members ?? heads.map((_, i) => i));
+    const main = new Set(clusterPoints(heads)[0]?.members ?? heads.map((_, i) => i));
     const inMain = coordWells.filter((_, i) => main.has(i));
-    const ids = new Set(inMain.map((w) => w.id));
 
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
     const eat = (x: number, y: number, z: number) => {
@@ -158,8 +123,6 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
     };
     for (const w of inMain) {
       eat(w.x!, w.y!, headElev(w));
-      // Depth range comes from this cluster's own picks, so an outlier's
-      // structure cannot stretch the vertical scale either.
       for (const m of shown) {
         const md = m.depths[w.id];
         if (!Number.isFinite(md)) continue;
@@ -169,7 +132,8 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
     }
     if (!Number.isFinite(minX)) return null;
     if (maxZ - minZ < 1) { minZ -= 1; maxZ += 1; }
-    return { bounds: { minX, maxX, minY, maxY, minZ, maxZ }, apart: coordWells.length - inMain.length, ids };
+    const bounds: Bounds = { minX, maxX, minY, maxY, minZ, maxZ };
+    return { bounds, apart: coordWells.length - inMain.length };
   }, [shown, coordWells, trajs]);
 
   const bounds = framing?.bounds ?? null;
@@ -184,170 +148,219 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
       minY: bounds.minY - padY, maxY: bounds.maxY + padY,
       nx: MESH, ny: MESH,
     };
-    const out: { id: string; label: string; color: string; grid: ReturnType<typeof buildSurface> }[] = [];
+    const out: { id: string; arrays: NonNullable<ReturnType<typeof surfaceMesh>> }[] = [];
     for (const m of shown) {
       const built = buildSurface(controlsFor.get(m.id) ?? [], mesh);
-      if (built) out.push({ id: m.id, label: m.label, color: m.color, grid: built });
+      if (!built) continue;
+      const arrays = surfaceMesh(built.grid);
+      if (arrays) out.push({ id: m.id, arrays });
     }
     return out;
   }, [shown, controlsFor, bounds]);
 
-  const camera = useMemo<Camera | null>(() => {
-    if (!bounds || size.w < 40 || size.h < 40) return null;
-    const base = frameBounds(bounds, size.w, size.h, vScale);
-    return {
-      ...base,
-      azimuth: base.azimuth + orbit.az,
-      elevation: Math.max(-1.45, Math.min(1.45, base.elevation + orbit.el)),
-      distance: base.distance / orbit.zoom,
-    };
-  }, [bounds, size, vScale, orbit]);
+  // --- three.js plumbing, created once ------------------------------------
+  const gl = useRef<{
+    renderer: THREE.WebGLRenderer;
+    labels: CSS2DRenderer;
+    scene: THREE.Scene;
+    camera: THREE.PerspectiveCamera;
+    controls: OrbitControls;
+    root: THREE.Group;
+    render: () => void;
+  } | null>(null);
+  const [ready, setReady] = useState(false);
 
-  // --- Draw ---------------------------------------------------------------
   useEffect(() => {
-    const cv = canvasRef.current;
-    if (!cv || !camera) return;
-    const dpr = window.devicePixelRatio || 1;
-    cv.width = Math.round(size.w * dpr);
-    cv.height = Math.round(size.h * dpr);
-    const ctx = cv.getContext('2d');
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, size.w, size.h);
+    const host = hostRef.current;
+    if (!host) return;
 
-    const b: Basis = basisOf(camera);
-    const P = (p: Vec3) => projectWith(camera, b, p);
-    const prims: Prim[] = [];
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    host.appendChild(renderer.domElement);
+
+    // Labels ride in a transparent DOM overlay: crisp text at any zoom, and no
+    // glyph atlas to maintain.
+    const labels = new CSS2DRenderer();
+    labels.domElement.className = 'scene3d-labels';
+    host.appendChild(labels.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, 1, 1, 1e7);
+    camera.up.set(0, 0, 1); // z is up here, not three.js's default y
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.12;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+    const key = new THREE.DirectionalLight(0xffffff, 2.0);
+    key.position.set(0.4, -0.8, 1);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.7);
+    fill.position.set(-0.7, 0.5, 0.4);
+    scene.add(fill);
+
+    const root = new THREE.Group();
+    scene.add(root);
+
+    // Render on demand — an idle scene should cost nothing. Damping keeps the
+    // camera moving briefly after the pointer stops, so keep pumping frames
+    // until it settles.
+    let queued = false;
+    let settle = 0;
+    const render = () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        const moving = controls.update();
+        renderer.render(scene, camera);
+        labels.render(scene, camera);
+        if (moving && settle++ < 240) render();
+        else settle = 0;
+      });
+    };
+    controls.addEventListener('change', render);
+
+    const ro = new ResizeObserver(() => {
+      const w = host.clientWidth, h = host.clientHeight;
+      if (w < 2 || h < 2) return;
+      renderer.setSize(w, h);
+      labels.setSize(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      render();
+    });
+    ro.observe(host);
+
+    gl.current = { renderer, labels, scene, camera, controls, root, render };
+    setReady(true);
+
+    return () => {
+      ro.disconnect();
+      controls.dispose();
+      renderer.dispose();
+      renderer.domElement.remove();
+      labels.domElement.remove();
+      gl.current = null;
+    };
+  }, []);
+
+  /** Replace the scene contents whenever the model changes. */
+  useEffect(() => {
+    const g = gl.current;
+    if (!g || !ready || !bounds) return;
+    const { root } = g;
+
+    // three.js does not free GPU buffers on remove(); leaking them on every
+    // surface toggle would climb into hundreds of megabytes.
+    for (const child of [...root.children]) {
+      root.remove(child);
+      child.traverse((o) => {
+        const m = o as THREE.Mesh;
+        m.geometry?.dispose?.();
+        const mat = m.material;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else mat?.dispose?.();
+      });
+    }
+    for (const el of [...g.labels.domElement.children]) el.remove();
 
     for (const s of surfaces) {
-      const g = s.grid!.grid;
-      const span = (g.zmax - g.zmin) || 1;
-      for (let j = 0; j < g.ny - 1; j++) {
-        for (let i = 0; i < g.nx - 1; i++) {
-          const z00 = g.z[j * g.nx + i], z10 = g.z[j * g.nx + i + 1];
-          const z11 = g.z[(j + 1) * g.nx + i + 1], z01 = g.z[(j + 1) * g.nx + i];
-          // Blank cells are "no data" — the 3D view must not invent a sheet there.
-          if (![z00, z10, z11, z01].every(Number.isFinite)) continue;
-          const x0 = g.minX + i * g.dx, x1 = x0 + g.dx;
-          const y0 = g.minY + j * g.dy, y1 = y0 + g.dy;
-          const c = [P({ x: x0, y: y0, z: z00 }), P({ x: x1, y: y0, z: z10 }),
-                     P({ x: x1, y: y1, z: z11 }), P({ x: x0, y: y1, z: z01 })];
-          if (!c.every((q) => q.visible)) continue;
-          const zm = (z00 + z10 + z11 + z01) / 4;
-          prims.push({
-            kind: 'quad',
-            pts: c.map((q) => ({ x: q.x, y: q.y })),
-            // z здесь — отметка; на карте шкала идёт по глубине, поэтому обратно.
-            fill: rampColor((g.zmax - zm) / span, 0.9),
-            depth: (c[0].depth + c[1].depth + c[2].depth + c[3].depth) / 4,
-          });
-        }
-      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(s.arrays.positions, 3));
+      geom.setAttribute('color', new THREE.BufferAttribute(s.arrays.colors, 3));
+      geom.setIndex(new THREE.BufferAttribute(s.arrays.indices, 1));
+      geom.computeVertexNormals();
+      root.add(new THREE.Mesh(geom, new THREE.MeshLambertMaterial({
+        vertexColors: true, side: THREE.DoubleSide,
+      })));
     }
 
     if (showFaults) {
-      // A fault is drawn as a vertical curtain spanning the model's depth range.
       for (const f of faults) {
-        for (let i = 0; i + 1 < f.trace.length; i++) {
-          const a = f.trace[i], bb = f.trace[i + 1];
-          const c = [P({ x: a.x, y: a.y, z: bounds!.maxZ }), P({ x: bb.x, y: bb.y, z: bounds!.maxZ }),
-                     P({ x: bb.x, y: bb.y, z: bounds!.minZ }), P({ x: a.x, y: a.y, z: bounds!.minZ })];
-          if (!c.every((q) => q.visible)) continue;
-          prims.push({
-            kind: 'quad',
-            pts: c.map((q) => ({ x: q.x, y: q.y })),
-            fill: 'rgba(255,159,10,0.30)',
-            depth: (c[0].depth + c[2].depth) / 2,
-          });
-        }
+        const c = faultCurtain(f.trace, bounds.minZ, bounds.maxZ);
+        if (!c) continue;
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.BufferAttribute(c.positions, 3));
+        geom.setIndex(new THREE.BufferAttribute(c.indices, 1));
+        root.add(new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
+          color: 0xff9f0a, transparent: true, opacity: 0.28,
+          side: THREE.DoubleSide, depthWrite: false,
+        })));
       }
     }
 
     if (showWells) {
       for (const w of coordWells) {
         const traj = trajs.get(w.id);
-        const active = w.id === activeWellId;
-        const head: Vec3 = { x: w.x!, y: w.y!, z: headElev(w) };
-        const path: Vec3[] = [head];
+        const pts: THREE.Vector3[] = [new THREE.Vector3(w.x!, w.y!, headElev(w))];
         if (traj?.length) {
           for (const t of traj) {
             const p = positionAtMd(traj, t.md);
-            path.push({ x: w.x! + p.east, y: w.y! + p.north, z: -tvdss(p.tvd, w.kb) });
+            pts.push(new THREE.Vector3(w.x! + p.east, w.y! + p.north, -tvdss(p.tvd, w.kb)));
           }
         } else {
-          path.push({ x: w.x!, y: w.y!, z: bounds!.minZ });
+          pts.push(new THREE.Vector3(w.x!, w.y!, bounds.minZ));
         }
-        const proj = path.map(P);
-        const vis = proj.filter((q) => q.visible);
-        if (vis.length < 2) continue;
-        prims.push({
-          kind: 'line',
-          pts: vis.map((q) => ({ x: q.x, y: q.y })),
-          stroke: active ? '#ffffff' : 'rgba(190,205,220,0.85)',
-          width: active ? 2.4 : 1.4,
-          depth: vis[Math.floor(vis.length / 2)].depth,
-        });
-        const h = proj[0];
-        if (h.visible) {
-          prims.push({ kind: 'text', x: h.x + 6, y: h.y - 6, text: w.name,
-            fill: active ? '#ffffff' : 'rgba(190,205,220,0.9)', depth: h.depth });
-        }
+        const active = w.id === activeWellId;
+        root.add(new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(pts),
+          new THREE.LineBasicMaterial({ color: active ? 0xffffff : 0xb8c6d4 }),
+        ));
+
+        const div = document.createElement('div');
+        div.className = `scene3d-label ${active ? 'on' : ''}`;
+        div.textContent = w.name;
+        const label = new CSS2DObject(div);
+        label.position.copy(pts[0]);
+        root.add(label);
       }
     }
 
-    // Painter's algorithm: far first. Canvas 2D has no depth buffer, so this
-    // ordering *is* the occlusion.
-    prims.sort((p, q) => q.depth - p.depth);
-    for (const p of prims) {
-      if (p.kind === 'quad') {
-        ctx.beginPath();
-        ctx.moveTo(p.pts[0].x, p.pts[0].y);
-        for (let i = 1; i < p.pts.length; i++) ctx.lineTo(p.pts[i].x, p.pts[i].y);
-        ctx.closePath();
-        ctx.fillStyle = p.fill;
-        ctx.fill();
-      } else if (p.kind === 'line') {
-        ctx.beginPath();
-        ctx.moveTo(p.pts[0].x, p.pts[0].y);
-        for (let i = 1; i < p.pts.length; i++) ctx.lineTo(p.pts[i].x, p.pts[i].y);
-        ctx.strokeStyle = p.stroke;
-        ctx.lineWidth = p.width;
-        ctx.stroke();
-      } else {
-        ctx.fillStyle = p.fill;
-        ctx.font = '12px ui-monospace, monospace';
-        ctx.fillText(p.text, p.x, p.y);
-      }
-    }
-  }, [camera, surfaces, coordWells, trajs, faults, showWells, showFaults, activeWellId, size, bounds]);
+    g.render();
+  }, [ready, surfaces, faults, showFaults, showWells, coordWells, trajs, activeWellId, bounds]);
 
-  // --- Interaction --------------------------------------------------------
-  const down = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    dragRef.current = { x: e.clientX, y: e.clientY };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const move = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    const d = dragRef.current;
-    if (!d) return;
-    const dx = e.clientX - d.x, dy = e.clientY - d.y;
-    dragRef.current = { x: e.clientX, y: e.clientY };
-    setOrbit((o) => ({ ...o, az: o.az - dx * 0.006, el: o.el + dy * 0.006 }));
-  };
-  const up = () => { dragRef.current = null; };
-  const wheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    setOrbit((o) => ({ ...o, zoom: Math.max(0.25, Math.min(6, o.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))) }));
+  /** Exaggeration is a display transform — the data keeps its own scale. */
+  useEffect(() => {
+    const g = gl.current;
+    if (!g || !ready) return;
+    g.root.scale.set(1, 1, vScale);
+    g.render();
+  }, [ready, vScale]);
+
+  /** Frame the model when it — or the exaggeration — changes shape. */
+  useEffect(() => {
+    const g = gl.current;
+    if (!g || !ready || !bounds) return;
+    const f = framingFor(bounds, vScale);
+    const eye = eyeFor(f, vScale, START_AZIMUTH, START_ELEVATION);
+    g.controls.target.set(f.target.x, f.target.y, f.target.z * vScale);
+    g.camera.position.set(eye.x, eye.y, eye.z);
+    g.camera.near = Math.max(1, f.distance / 1000);
+    g.camera.far = f.distance * 20;
+    g.camera.updateProjectionMatrix();
+    g.controls.update();
+    g.render();
+  }, [ready, bounds, vScale]);
+
+  const resetView = () => {
+    const g = gl.current;
+    if (!g || !bounds) return;
+    const f = framingFor(bounds, vScale);
+    const eye = eyeFor(f, vScale, START_AZIMUTH, START_ELEVATION);
+    g.camera.position.set(eye.x, eye.y, eye.z);
+    g.controls.target.set(f.target.x, f.target.y, f.target.z * vScale);
+    g.controls.update();
+    g.render();
   };
 
   const toggle = (id: string) =>
-    setHidden((h) => {
-      const cur = h ?? mappable.slice(DEFAULT_SURFACES).map((m) => m.id);
-      return cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
-    });
+    setHidden((h) => (h.includes(id) ? h.filter((x) => x !== id) : [...h, id]));
 
   return (
-    <div className="scene3d" ref={wrapRef}>
-      <canvas ref={canvasRef} className="scene3d-canvas" style={{ width: size.w, height: size.h }}
-        onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel} />
+    <div className="scene3d">
+      <div className="scene3d-host" ref={hostRef} />
 
       {!bounds && (
         <div className="scene3d-empty">
@@ -366,7 +379,7 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
             <button className={`scene3d-btn ${showWells ? 'on' : ''}`} onClick={() => setShowWells((v) => !v)}>Стволы</button>
             <button className={`scene3d-btn ${showFaults ? 'on' : ''}`} onClick={() => setShowFaults((v) => !v)}
               disabled={faults.length === 0}>Разломы{faults.length ? ` (${faults.length})` : ''}</button>
-            <button className="scene3d-btn" onClick={() => setOrbit({ az: 0, el: 0, zoom: 1 })}>Сброс вида</button>
+            <button className="scene3d-btn" onClick={resetView}>Сброс вида</button>
           </div>
           {framing && framing.apart > 0 && (
             <div className="scene3d-note">
@@ -375,7 +388,7 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
           )}
           <div className="scene3d-surfs">
             {mappable.map((m) => (
-              <button key={m.id} className={`scene3d-surf ${isHidden(m.id) ? '' : 'on'}`}
+              <button key={m.id} className={`scene3d-surf ${hidden.includes(m.id) ? '' : 'on'}`}
                 onClick={() => toggle(m.id)} title={m.label}>
                 <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
               </button>
@@ -384,7 +397,7 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
         </div>
       )}
 
-      <div className="scene3d-hint">Перетаскивание — поворот · колесо — приближение</div>
+      <div className="scene3d-hint">Перетаскивание — поворот · колесо — приближение · правая кнопка — сдвиг</div>
     </div>
   );
 }

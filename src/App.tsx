@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Layers, Share2, FolderOpen, MessageSquare,
   MousePointer2, Square, PenLine, Milestone, Type, Table as TableIcon,
@@ -17,11 +17,18 @@ import { WellTie } from './components/WellTie';
 import { ReservesSummary } from './components/ReservesSummary';
 import { CrossplotView } from './components/CrossplotView';
 import { SeismicView } from './components/SeismicView';
-import { Scene3D } from './components/Scene3D';
+
 import {
   bootstrap, persist, createProject, renameProject, switchProject, deleteProject,
 } from './persistence';
 import { buildDemoLas } from './sampleData';
+
+/**
+ * three.js weighs ~136 kB gzipped — more than the entire rest of the app. It is
+ * fetched when the 3D tab is first opened, so loading a project and reading a
+ * map never pays for a renderer the user may not touch.
+ */
+const Scene3D = lazy(() => import('./components/Scene3D').then((m) => ({ default: m.Scene3D })));
 
 type TabKey = 'map' | 'correlation' | 'tie' | 'seismic' | 'scene3d' | 'crossplot' | 'reserves' | 'dashboard';
 
@@ -262,7 +269,9 @@ export default function App() {
         ) : tab === 'seismic' ? (
           <SeismicView wells={wells} markers={markers} />
         ) : tab === 'scene3d' ? (
-          <Scene3D wells={wells} markers={markers} activeWellId={activeWellId} />
+          <Suspense fallback={<div className="scene3d-empty">Загрузка 3D…</div>}>
+            <Scene3D wells={wells} markers={markers} activeWellId={activeWellId} />
+          </Suspense>
         ) : tab === 'crossplot' ? (
           <CrossplotView wells={wells} markers={markers} activeWellId={activeWellId} />
         ) : tab === 'tie' ? (

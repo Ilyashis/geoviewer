@@ -959,8 +959,16 @@ body {
 /* --- 3D-сцена: поверхности, стволы, разломы --- */
 .scene3d { flex: 1; position: relative; overflow: hidden; background:
   radial-gradient(1200px 700px at 50% 30%, rgba(16,161,255,0.05), transparent 70%), var(--canvas); }
-.scene3d-canvas { position: absolute; inset: 0; display: block; cursor: grab; touch-action: none; }
-.scene3d-canvas:active { cursor: grabbing; }
+.scene3d-host { position: absolute; inset: 0; }
+.scene3d-host canvas { display: block; cursor: grab; touch-action: none; }
+.scene3d-host canvas:active { cursor: grabbing; }
+/* Слой подписей CSS2DRenderer: поверх сцены, но не перехватывает мышь. */
+.scene3d-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.scene3d-label {
+  font: 12px var(--mono); color: rgba(190,205,220,0.9); white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.85); transform: translate(10px, -10px);
+}
+.scene3d-label.on { color: #fff; font-weight: 600; }
 .scene3d-panel {
   position: absolute; top: 16px; left: 18px; width: 236px; display: flex; flex-direction: column; gap: 10px;
   background: rgba(27, 33, 39, 0.85); backdrop-filter: blur(10px);
