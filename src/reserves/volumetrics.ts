@@ -55,7 +55,8 @@ export function volumetrics(grid: Grid, p: VolParams, contact?: Contact, pinchou
   let area = 0;
   for (let k = 0; k < grid.z.length; k++) {
     const th = grid.z[k];
-    if (th <= 0) continue;
+    // Blank cells are outside the data, not zero-thickness reservoir.
+    if (!Number.isFinite(th) || th <= 0) continue;
     if (clip) {
       const x = grid.minX + (k % grid.nx) * grid.dx;
       const y = grid.minY + Math.floor(k / grid.nx) * grid.dy;

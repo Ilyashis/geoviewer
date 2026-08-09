@@ -498,6 +498,7 @@ body {
 }
 .map-leg-ends { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; color: var(--text-3); }
 .map-leg-row { display: flex; align-items: center; gap: 8px; }
+.map-leg-warn { margin-top: 6px; max-width: 260px; line-height: 1.35; color: var(--warn, #e8913a); }
 
 /* volumetrics panel */
 .vol-panel {

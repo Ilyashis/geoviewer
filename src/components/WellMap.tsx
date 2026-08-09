@@ -5,6 +5,7 @@ import { contourLevels } from '../core/geom/grid';
 import type { Pt } from '../core/geom/polygon';
 import { estimateThrow } from '../core/geom/fault';
 import { buildSurface, type ControlPoint } from '../core/framework';
+import { clusterPoints, clusterGap } from '../core/geom/cluster';
 import { tvdss } from '../core/crs';
 import { useStore } from '../store';
 import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../wells/deviation';
@@ -236,6 +237,21 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   );
   const grid = builtSurface?.grid ?? null;
 
+  /**
+   * Wells that don't belong to one field. The grid leaves unreachable cells
+   * blank, so a stray well — a leftover demo point, or two fields dropped in
+   * together — stretches the mesh over mostly nothing and the map looks broken.
+   * Naming the split turns that into a diagnosis.
+   */
+  const scatterNote = useMemo(() => {
+    const pts = field?.points ?? [];
+    if (pts.length < 3) return null;
+    const cl = clusterPoints(pts);
+    if (cl.length < 2) return null;
+    const gapKm = Math.min(...cl.slice(1).map((c) => clusterGap(cl[0], c))) / 1000;
+    return { groups: cl.length, main: cl[0].members.length, apart: pts.length - cl[0].members.length, gapKm };
+  }, [field]);
+
   // Top-surface structure (TVDSS) on the same mesh — depths for the OWC clip.
   const topGrid = useMemo(() => {
     if (mode !== 'isochore' || !top || !gridGeom) return null;
@@ -275,9 +291,11 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     ctx.globalAlpha = 0.82;
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
+        const v = grid.z[j * nx + i];
+        if (!Number.isFinite(v)) continue; // вне досягаемости данных — не закрашиваем
         const x = minX + i * dx, y = minY + j * dy;
         const p = toPx(x, y), p2 = toPx(x + dx, y - dy);
-        ctx.fillStyle = rampColor(vt(grid.z[j * nx + i]));
+        ctx.fillStyle = rampColor(vt(v));
         ctx.fillRect(p.px - 0.5, p.py - 0.5, p2.px - p.px + 1, p2.py - p.py + 1);
       }
     }
@@ -716,6 +734,13 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             {pinchClip && <div className="map-leg-row"><span className="map-leg-pinch" /> выклинивание ({pinchClip.length} верш.)</div>}
             {activeFaults.length > 0 && <div className="map-leg-row"><span className="map-leg-fault" /> разлом{activeFaults.length > 1 ? 'ов' : ''} ({activeFaults.length})</div>}
             {anyDeviated && <div className="map-leg-row"><span className="map-leg-dev" /> накл. ствол → снос/TVDSS</div>}
+            {scatterNote && (
+              <div className="map-leg-warn">
+                {`Скважины в ${scatterNote.groups} группах: ${scatterNote.apart} в стороне от основных ${scatterNote.main}, ` +
+                 `просвет ${scatterNote.gapKm < 10 ? scatterNote.gapKm.toFixed(1) : Math.round(scatterNote.gapKm)} км. ` +
+                 'Между группами карта пуста — там нет данных.'}
+              </div>
+            )}
             {seismicControls && seismicControls.length > 0 && (
               <div className="map-leg-row"><span className="map-leg-seis" /> сейсмо-горизонт ({seismicControls.length} тчк{seismicLines.length > 1 ? `, ${seismicLines.length} лин.` : ''})</div>
             )}
