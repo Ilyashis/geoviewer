@@ -22,6 +22,8 @@ interface Props {
 const MESH = 44;
 /** Default exaggeration: relief is tens of metres over kilometres of field. */
 const DEFAULT_V = 12;
+/** Surfaces visible before the user chooses (see `shown`). */
+const DEFAULT_SURFACES = 6;
 
 /** One drawable, already projected, carrying the depth it sorts on. */
 type Prim =
@@ -57,7 +59,7 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
   const [vScale, setVScale] = useState(DEFAULT_V);
   const [showWells, setShowWells] = useState(true);
   const [showFaults, setShowFaults] = useState(true);
-  const [hidden, setHidden] = useState<string[]>([]);
+  const [hidden, setHidden] = useState<string[] | null>(null);
   /** Orbit offsets applied on top of the framing camera. */
   const [orbit, setOrbit] = useState({ az: 0, el: 0, zoom: 1 });
   const dragRef = useRef<{ x: number; y: number } | null>(null);
@@ -105,7 +107,17 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
     );
   }, [markers, coordWells]);
 
-  const shown = useMemo(() => mappable.filter((m) => !hidden.includes(m.id)), [mappable, hidden]);
+  /**
+   * Cost is linear in quads on Canvas 2D — measured at ~4 µs each, so all 48
+   * mappable surfaces come to 88 000 quads and 330 ms a frame. Until the
+   * renderer moves to the GPU, only the first few are on by default; the rest
+   * are one click away.
+   */
+  const shown = useMemo(() => {
+    const off = hidden ?? mappable.slice(DEFAULT_SURFACES).map((m) => m.id);
+    return mappable.filter((m) => !off.includes(m.id));
+  }, [mappable, hidden]);
+  const isHidden = (id: string) => !shown.some((m) => m.id === id);
 
   /** Control points per surface, in TVDSS — the same input the map grids. */
   const controlsFor = useMemo(() => {
@@ -327,7 +339,10 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
   };
 
   const toggle = (id: string) =>
-    setHidden((h) => (h.includes(id) ? h.filter((x) => x !== id) : [...h, id]));
+    setHidden((h) => {
+      const cur = h ?? mappable.slice(DEFAULT_SURFACES).map((m) => m.id);
+      return cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+    });
 
   return (
     <div className="scene3d" ref={wrapRef}>
@@ -360,7 +375,7 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
           )}
           <div className="scene3d-surfs">
             {mappable.map((m) => (
-              <button key={m.id} className={`scene3d-surf ${hidden.includes(m.id) ? '' : 'on'}`}
+              <button key={m.id} className={`scene3d-surf ${isHidden(m.id) ? '' : 'on'}`}
                 onClick={() => toggle(m.id)} title={m.label}>
                 <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
               </button>
