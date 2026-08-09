@@ -113,7 +113,22 @@ export function parseLas(text: string): ParsedLas {
 
   const nCols = curveInfo.length;
   const data: number[][] = Array.from({ length: nCols }, () => []);
-  const split = (l: string) => l.split(/[\s,]+/).filter((t) => t); // space/tab/comma delimited
+
+  /**
+   * LAS 3.0 lets the file declare its delimiter. That matters beyond taste:
+   * with DLM COMMA an absent value is written as nothing at all (`1000,,5`),
+   * so runs of delimiters must NOT collapse — otherwise every column after the
+   * gap shifts left and the row silently reads as different curves. Where no
+   * delimiter is declared (all of LAS 2.0) the permissive split stays, because
+   * those files separate columns by whitespace and never leave a hole.
+   */
+  const declared = (version['DLM']?.value ?? '').trim().toUpperCase();
+  const delim = declared === 'COMMA' ? ',' : declared === 'TAB' ? '\t' : null;
+  const split = delim
+    ? (l: string) => l.split(delim).map((t) => t.trim())
+    : (l: string) => l.split(/[\s,]+/).filter((t) => t);
+  // A hole is a missing reading, not zero — `Number('')` would make it 0.
+  const val = (t: string | undefined) => (t === undefined || t === '' ? NaN : Number(t));
 
   if (nCols > 0) {
     if (wrap) {
@@ -121,7 +136,7 @@ export function parseLas(text: string): ParsedLas {
       const toks: string[] = [];
       for (const l of dataLines) for (const t of split(l)) toks.push(t);
       for (let i = 0; i + nCols <= toks.length; i += nCols) {
-        for (let c = 0; c < nCols; c++) data[c].push(Number(toks[i + c]));
+        for (let c = 0; c < nCols; c++) data[c].push(val(toks[i + c]));
       }
     } else {
       // WRAP=NO: one physical line = one depth row. Row-based parsing keeps a
@@ -130,7 +145,7 @@ export function parseLas(text: string): ParsedLas {
       for (const l of dataLines) {
         const toks = split(l);
         if (toks.length === 0) continue;
-        for (let c = 0; c < nCols; c++) data[c].push(c < toks.length ? Number(toks[c]) : NaN);
+        for (let c = 0; c < nCols; c++) data[c].push(c < toks.length ? val(toks[c]) : NaN);
       }
     }
   }

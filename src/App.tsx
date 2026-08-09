@@ -222,7 +222,7 @@ export default function App() {
           <button className="iconbtn" title="Открыть LAS" onClick={() => inputRef.current?.click()}>
             <FolderOpen size={16} strokeWidth={1.75} />
           </button>
-          <button className="iconbtn" title="Импорт из CSV (разбивки / литология)" onClick={() => setShowImport(true)}>
+          <button className="iconbtn" title="Импорт из CSV: разбивки, литология, инклинометрия, устья" onClick={() => setShowImport(true)}>
             <Milestone size={16} strokeWidth={1.75} />
           </button>
           <ExportMenu bodyRef={bodyRef} depthWindow={effectiveWindow} />
