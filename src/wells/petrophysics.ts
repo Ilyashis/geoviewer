@@ -59,6 +59,19 @@ const percentile = (values: (number | null)[], p: number): number | null => {
   return f.length ? f[Math.floor(p * (f.length - 1))] : null;
 };
 
+/**
+ * Does this curve carry a 0…1 fraction? Judged on the values, never the unit:
+ * real files label К_п as `%` while storing 0.24, and label a neutron curve
+ * `m3/m3` while storing 3.5. A high percentile rather than the maximum keeps a
+ * single spike from disqualifying a good curve, and a curve that is zero
+ * everywhere carries nothing to use.
+ */
+function fraction(c: Curve): boolean {
+  const hi = percentile(c.values, 0.99);
+  if (hi == null || hi > 1) return false;
+  return c.values.some((v) => v != null && Number.isFinite(v) && v > 0);
+}
+
 const GR_RE = /^(gr|gk|гк|sgr|cgr|grd|gamma)/i;         // NOT ГГК — that's density
 const RHOB_RE = /^(rhob|rhoz|rhb|den|dens|ggkp|ггкп|ggk|ггк)/i;
 const RES_DEEP_RE = /^(resd|rt|rd|ild|lld|at90|res|bk|бк|ik|ик|il|ил)/i;
@@ -66,8 +79,36 @@ const RES_MICRO_RE = /^(mbk|мбк|bmk|бмк|msfl|mll|sfl|msf|mnk|мнк)/i;
 const DT_RE = /^(dt|dtp|dtco|ak|ак|sonic)/i;
 const PHI_RE = /^(nphi|phit|phie|phi|poro|por|kp|кп|nkt|нкт)/i;
 
+/**
+ * A delivered interpretation, as Russian projects normally ship it: the
+ * petrophysicist's own К_п, К_гл, К_нг and the reservoir flag К_кол, computed
+ * with core calibration and local knowledge that no generic transform here can
+ * reproduce. Where these exist they are the answer, not an input to one.
+ *
+ * Anchored deliberately. `rp` is ρ_п, the interpreted formation resistivity,
+ * but `RPCHX` is a raw tool channel; `kng` is hydrocarbon saturation while the
+ * neighbouring `К_во` is *irreducible* water and would badly understate Sw if
+ * mistaken for the current value.
+ */
+const RES_INTERP_RE = /^(rp|рп)$/i;
+const VSH_INTERP_RE = /^(kgl|кгл|vsh|vcl|vshale)$/i;
+/** α_ПС: 1 in clean sand, 0 in shale — the inverse of a shale index. */
+const APS_RE = /^(aps|апс|alphaps|альфапс)$/i;
+/** Hydrocarbon saturation, so Sw = 1 − v. Never К_во (irreducible water). */
+const SW_HC_RE = /^(kng|кнг|kn|кн|sng|снг)$/i;
+const SW_W_RE = /^(sw|swt|swe|kv|кв)$/i;
+/** Reservoir flag, 0/1. */
+const NET_FLAG_RE = /^(kol|кол|collector|коллектор|net)$/i;
+
 /** How porosity was obtained — surfaced so the geologist sees the method, not a black box. */
 export type PhiMethod = 'density' | 'sonic' | 'direct' | 'none';
+
+/** Where the shale fraction came from. */
+export type VshSource = 'gr' | 'kgl' | 'aps' | 'none';
+/** Where water saturation came from. */
+export type SwSource = 'archie' | 'kng' | 'sw' | 'none';
+/** How a sample was judged to be reservoir. */
+export type NetSource = 'cutoffs' | 'flag';
 
 export interface CurvePick {
   gr?: Curve;
@@ -76,6 +117,12 @@ export interface CurvePick {
   phiMethod: PhiMethod;
   /** True when a µs/ft-labelled sonic was actually µs/m and had to be rescaled. */
   dtRescaled?: boolean;
+  vshCurve?: Curve;
+  vshSource: VshSource;
+  swCurve?: Curve;
+  swSource: SwSource;
+  netFlag?: Curve;
+  netSource: NetSource;
 }
 
 /**
@@ -91,19 +138,43 @@ export function pickCurves(well: Well): CurvePick {
   const find = (re: RegExp) => well.curves.find((c) => re.test(c.mnemonic));
 
   const gr = find(GR_RE);
-  const res = well.curves.find((c) => RES_DEEP_RE.test(c.mnemonic) && !RES_MICRO_RE.test(c.mnemonic))
+  // ρ_п is the interpreted formation resistivity — already corrected for
+  // invasion and borehole, so it beats any raw curve when the file carries it.
+  const res = find(RES_INTERP_RE)
+    ?? well.curves.find((c) => RES_DEEP_RE.test(c.mnemonic) && !RES_MICRO_RE.test(c.mnemonic))
     ?? find(RES_MICRO_RE); // micro only as a last resort
 
+  // Shale fraction: the interpreter's own К_гл first, then α_ПС (which runs the
+  // other way — 1 in clean sand), and only then a GR transform.
+  const kgl = find(VSH_INTERP_RE);
+  const aps = find(APS_RE);
+  const [vshCurve, vshSource]: [Curve | undefined, VshSource] =
+    kgl && fraction(kgl) ? [kgl, 'kgl']
+    : aps && fraction(aps) ? [aps, 'aps']
+    : gr ? [undefined, 'gr'] : [undefined, 'none'];
+
+  // Saturation: delivered К_нг (hydrocarbon, so Sw = 1 − v) or Sw itself,
+  // otherwise Archie from φ and resistivity.
+  const kng = find(SW_HC_RE), swc = find(SW_W_RE);
+  const [swCurve, swSource]: [Curve | undefined, SwSource] =
+    kng && fraction(kng) ? [kng, 'kng']
+    : swc && fraction(swc) ? [swc, 'sw']
+    : res ? [undefined, 'archie'] : [undefined, 'none'];
+
+  const netFlag = find(NET_FLAG_RE);
+  const netSource: NetSource = netFlag ? 'flag' : 'cutoffs';
+  const common = { gr, res, vshCurve, vshSource, swCurve, swSource, netFlag, netSource };
+
   // 1. A genuine porosity curve — accepted only if it looks like a fraction.
-  const direct = find(PHI_RE);
-  if (direct) {
-    const hi = percentile(direct.values, 0.95);
-    if (hi != null && hi > 0 && hi <= 1) return { gr, res, phiCurve: direct, phiMethod: 'direct' };
+  //    Every candidate is tried: a well carrying both NKT (which is not
+  //    porosity at all) and К_п must not lose К_п to whichever comes first.
+  for (const c of well.curves.filter((x) => PHI_RE.test(x.mnemonic))) {
+    if (fraction(c)) return { ...common, phiCurve: c, phiMethod: 'direct' };
   }
 
   // 2. Density porosity.
   const rhob = find(RHOB_RE);
-  if (rhob) return { gr, res, phiCurve: rhob, phiMethod: 'density' };
+  if (rhob) return { ...common, phiCurve: rhob, phiMethod: 'density' };
 
   // 3. Sonic (Wyllie). µs/ft rock spans ~40–190, µs/m ~130–620; a median above
   //    190 cannot be µs/ft at all, so the label loses to the data.
@@ -112,10 +183,10 @@ export function pickCurves(well: Well): CurvePick {
     const med = percentile(dt.values, 0.5);
     const labelledMetric = /m\b|м/i.test(dt.unit ?? '') && !/ft|фут/i.test(dt.unit ?? '');
     const dtRescaled = med != null ? med > 200 : labelledMetric;
-    return { gr, res, phiCurve: dt, phiMethod: 'sonic', dtRescaled };
+    return { ...common, phiCurve: dt, phiMethod: 'sonic', dtRescaled };
   }
 
-  return { gr, res, phiMethod: 'none' };
+  return { ...common, phiMethod: 'none' };
 }
 
 export interface ZoneStats {
@@ -132,21 +203,29 @@ export interface ZoneStats {
  */
 export function zoneStats(well: Well, top: number, base: number, p: PetroParams): ZoneStats | null {
   const pick = pickCurves(well);
-  const { gr, res, phiCurve } = pick;
-  if (!gr || !res || !phiCurve || pick.phiMethod === 'none' || well.depth.length < 2) return null;
+  const { gr, res, phiCurve, vshCurve, swCurve, netFlag } = pick;
+  if (!phiCurve || pick.phiMethod === 'none' || well.depth.length < 2) return null;
+  // Each decision needs *a* source, but which one differs: a raw-log well needs
+  // GR and a resistivity, while a well delivered with К_кол and К_нг needs
+  // neither. Demanding both, as this once did, threw away exactly the wells
+  // that arrive already interpreted.
+  if (pick.netSource === 'cutoffs' && !vshCurve && !gr) return null;
+  if (pick.swSource === 'none') return null;
 
   const lo = Math.min(top, base), hi = Math.max(top, base);
   const step = Math.abs(well.depth[1] - well.depth[0]) || 0.1;
 
   // Auto GR baselines over the zone (clean → shale).
   let grMin = Infinity, grMax = -Infinity;
-  for (let i = 0; i < well.depth.length; i++) {
-    const d = well.depth[i];
-    if (d < lo || d > hi) continue;
-    const g = gr.values[i];
-    if (g == null || !Number.isFinite(g)) continue;
-    if (g < grMin) grMin = g;
-    if (g > grMax) grMax = g;
+  if (gr) {
+    for (let i = 0; i < well.depth.length; i++) {
+      const d = well.depth[i];
+      if (d < lo || d > hi) continue;
+      const g = gr.values[i];
+      if (g == null || !Number.isFinite(g)) continue;
+      if (g < grMin) grMin = g;
+      if (g > grMax) grMax = g;
+    }
   }
 
   // Porosity from whichever source this well actually has.
@@ -162,15 +241,48 @@ export function zoneStats(well: Well, top: number, base: number, p: PetroParams)
   for (let i = 0; i < well.depth.length; i++) {
     const d = well.depth[i];
     if (d < lo || d > hi) continue;
-    const g = gr.values[i], pv = phiCurve.values[i], rt = res.values[i];
-    if (g == null || pv == null || rt == null) continue;
+
+    const flagV = netFlag?.values[i], vshV = vshCurve?.values[i], grV = gr?.values[i];
+    // Gross counts the rock we could actually judge. It must not be tied to the
+    // porosity curve: an interpreted К_п exists only inside reservoirs, so
+    // counting gross where φ exists would make N/G exactly 1 every time.
+    const decidable = pick.netSource === 'flag' ? flagV != null
+      : vshCurve ? vshV != null : grV != null;
+    if (!decidable) continue;
     gross += step;
-    const vsh = vshaleFromGR(g, grMin, grMax);
-    const phi = porosityAt(pv);
-    const sw = archieSw(phi, rt, p);
-    if (vsh < p.vshCut && phi > p.phiCut && sw < p.swCut) {
-      net += step; phiSum += phi; swSum += sw; netSamples++;
+
+    let reservoir: boolean;
+    if (pick.netSource === 'flag') {
+      reservoir = flagV! > 0.5;
+    } else {
+      // α_ПС runs the other way from a shale index: 1 is clean sand.
+      const vsh = vshCurve
+        ? clamp(pick.vshSource === 'aps' ? 1 - vshV! : vshV!, 0, 1)
+        : vshaleFromGR(grV!, grMin, grMax);
+      reservoir = vsh < p.vshCut;
     }
+    if (!reservoir) continue;
+
+    const pv = phiCurve.values[i];
+    if (pv == null) continue; // reservoir, but nothing to say how porous
+    const phi = porosityAt(pv);
+    // The interpreter's flag already embodies their cutoffs; applying ours on
+    // top would quietly re-filter their answer.
+    if (pick.netSource === 'cutoffs' && !(phi > p.phiCut)) continue;
+
+    let sw: number;
+    if (swCurve) {
+      const sv = swCurve.values[i];
+      if (sv == null) continue;
+      sw = clamp(pick.swSource === 'kng' ? 1 - sv : sv, 0, 1);
+    } else {
+      const rt = res!.values[i];
+      if (rt == null) continue;
+      sw = archieSw(phi, rt, p);
+    }
+    if (sw >= p.swCut) continue;
+
+    net += step; phiSum += phi; swSum += sw; netSamples++;
   }
 
   return {
@@ -188,13 +300,19 @@ export interface ZoneAggregate {
   /** How φ was obtained across the wells used, and which curves fed it. */
   phiMethod: PhiMethod;
   curves: string;
+  /**
+   * How many of those wells were counted from a delivered interpretation —
+   * the petrophysicist's own reservoir flag — rather than from our cutoffs.
+   * Worth showing: the two answer to different authorities.
+   */
+  interpreted: number;
 }
 
 /** Field-average net-pay stats over a zone: net-weighted φ/Sw, aggregate N/G. */
 export function aggregateZone(
   wells: Well[], topDepth: (w: Well) => number | undefined, baseDepth: (w: Well) => number | undefined, p: PetroParams,
 ): ZoneAggregate | null {
-  let gGross = 0, gNet = 0, phiW = 0, swW = 0, used = 0;
+  let gGross = 0, gNet = 0, phiW = 0, swW = 0, used = 0, interpreted = 0;
   const methods = new Set<PhiMethod>();
   const mnemonics = new Set<string>();
   for (const w of wells) {
@@ -203,8 +321,10 @@ export function aggregateZone(
     const s = zoneStats(w, t, b, p);
     if (!s || s.gross <= 0) continue;
     gGross += s.gross; gNet += s.net; phiW += s.phi * s.net; swW += s.sw * s.net; used++;
+    if (s.pick.netSource === 'flag') interpreted++;
     methods.add(s.pick.phiMethod);
-    for (const m of [s.pick.gr?.mnemonic, s.pick.res?.mnemonic, s.pick.phiCurve?.mnemonic]) if (m) mnemonics.add(m);
+    for (const m of [s.pick.gr?.mnemonic, s.pick.res?.mnemonic, s.pick.phiCurve?.mnemonic,
+                     s.pick.swCurve?.mnemonic, s.pick.netFlag?.mnemonic]) if (m) mnemonics.add(m);
   }
   if (used === 0 || gGross <= 0) return null;
   return {
@@ -214,5 +334,6 @@ export function aggregateZone(
     wellsUsed: used,
     phiMethod: methods.size === 1 ? [...methods][0] : 'none',
     curves: [...mnemonics].join(', '),
+    interpreted,
   };
 }

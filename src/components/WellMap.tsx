@@ -741,7 +741,13 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
                 <VolRow k="Скважин в зоне" v={String(logStats.wellsUsed)} />
               </div>
               <div className="vol-note">
-                {`φ — ${PHI_METHOD_RU[logStats.phiMethod]}`}{logStats.curves ? ` · кривые: ${logStats.curves}` : ''}
+                {`φ — ${PHI_METHOD_RU[logStats.phiMethod]}`}
+                {/* Отсечки ниже не управляют скважинами, где коллектор задан
+                    интерпретатором, — об этом честнее сказать прямо. */}
+                {logStats.interpreted > 0
+                  ? ` · коллектор по К_кол у ${logStats.interpreted} из ${logStats.wellsUsed} скв. (отсечки к ним не применяются)`
+                  : ''}
+                {logStats.curves ? ` · кривые: ${logStats.curves}` : ''}
               </div>
               <div className="vol-params cols3">
                 <VolInput label="Vsh отс." value={petro.vshCut} step={0.05} onChange={(v) => setPetro({ ...petro, vshCut: v })} />
