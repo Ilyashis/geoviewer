@@ -2,6 +2,7 @@ import type { StateCreator } from 'zustand';
 import type { ControlPoint } from '../../core/framework';
 import type { WellCheckshot } from '../../wells/checkshot';
 import type { SegyLine } from '../../seismic/segy';
+import type { Pt } from '../../core/geom/polygon';
 import type { Store } from '../types';
 
 /**
@@ -11,6 +12,17 @@ import type { Store } from '../types';
  * line, and each line's points feed the map as a separate transect. The map
  * merges all of a label's lines with the well picks when building that surface.
  */
+/**
+ * A fault: its trace in plan view, and the пласты whose surfaces its plane
+ * cuts (usually all of them — a fault dying out upwards cuts only some).
+ */
+export interface FaultDef {
+  id: string;
+  label: string;
+  markerIds: string[];
+  trace: Pt[];
+}
+
 export interface FrameworkSlice {
   /** Measured time–depth pairs per well — the real velocity control. */
   checkshots: WellCheckshot[];
@@ -19,6 +31,14 @@ export interface FrameworkSlice {
   segyLines: SegyLine[];
   addSegyLine: (line: SegyLine) => void;
   removeSegyLine: (id: string) => void;
+  /**
+   * Faults, held here rather than inside the map view: the views are mounted
+   * one at a time, so state living in the map was silently discarded the
+   * moment the user looked at anything else — and the 3D scene draws the same
+   * fault planes the map draws.
+   */
+  faults: FaultDef[];
+  setFaults: (faults: FaultDef[] | ((prev: FaultDef[]) => FaultDef[])) => void;
   seismicHorizons: Record<string, Record<string, ControlPoint[]>>;
   setSeismicHorizon: (label: string, lineId: string, controls: ControlPoint[]) => void;
   clearSeismicHorizon: (label: string, lineId: string) => void;
@@ -38,6 +58,9 @@ export const createFrameworkSlice: StateCreator<Store, [], [], FrameworkSlice> =
   addSegyLine: (line) =>
     set((s) => ({ segyLines: [...s.segyLines.filter((l) => l.id !== line.id), line] })),
   removeSegyLine: (id) => set((s) => ({ segyLines: s.segyLines.filter((l) => l.id !== id) })),
+  faults: [],
+  setFaults: (faults) =>
+    set((s) => ({ faults: typeof faults === 'function' ? faults(s.faults) : faults })),
   seismicHorizons: {},
   setSeismicHorizon: (label, lineId, controls) =>
     set((s) => ({

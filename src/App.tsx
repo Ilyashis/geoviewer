@@ -17,18 +17,20 @@ import { WellTie } from './components/WellTie';
 import { ReservesSummary } from './components/ReservesSummary';
 import { CrossplotView } from './components/CrossplotView';
 import { SeismicView } from './components/SeismicView';
+import { Scene3D } from './components/Scene3D';
 import {
   bootstrap, persist, createProject, renameProject, switchProject, deleteProject,
 } from './persistence';
 import { buildDemoLas } from './sampleData';
 
-type TabKey = 'map' | 'correlation' | 'tie' | 'seismic' | 'crossplot' | 'reserves' | 'dashboard';
+type TabKey = 'map' | 'correlation' | 'tie' | 'seismic' | 'scene3d' | 'crossplot' | 'reserves' | 'dashboard';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'map', label: 'Карта' },
   { key: 'correlation', label: 'Корр. схема' },
   { key: 'tie', label: 'Привязка' },
   { key: 'seismic', label: 'Сейсмика' },
+  { key: 'scene3d', label: '3D' },
   { key: 'crossplot', label: 'Кроссплоты' },
   { key: 'reserves', label: 'Запасы' },
   { key: 'dashboard', label: 'Дашборд' },
@@ -259,6 +261,8 @@ export default function App() {
           <ReservesSummary wells={wells} markers={markers} />
         ) : tab === 'seismic' ? (
           <SeismicView wells={wells} markers={markers} />
+        ) : tab === 'scene3d' ? (
+          <Scene3D wells={wells} markers={markers} activeWellId={activeWellId} />
         ) : tab === 'crossplot' ? (
           <CrossplotView wells={wells} markers={markers} activeWellId={activeWellId} />
         ) : tab === 'tie' ? (

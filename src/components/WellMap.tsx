@@ -9,6 +9,7 @@ import { clusterPoints, clusterGap } from '../core/geom/cluster';
 import { SurfacePicker } from './SurfacePicker';
 import { tvdss } from '../core/crs';
 import { useStore } from '../store';
+import type { FaultDef } from '../store/slices/framework';
 import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../wells/deviation';
 import { metricWells } from '../wells/coords';
 import { marchingSquares } from '../core/geom/contours';
@@ -39,8 +40,6 @@ const PHI_METHOD_RU: Record<string, string> = {
 };
 
 interface Pos { id: string; name: string; x: number; y: number }
-/** A fault trace and the пласты its plane cuts (usually all of them). */
-interface FaultDef { id: string; label: string; markerIds: string[]; trace: Pt[] }
 
 /** Two-hue ramp, low→high value. */
 const RAMP: [number, number, number][] = [
@@ -79,12 +78,14 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const [pinchPts, setPinchPts] = useState<Pt[]>([]);
   const [drawingPinch, setDrawingPinch] = useState(false);
   const pinchDragRef = useRef<number | null>(null);
-  const [faults, setFaults] = useState<FaultDef[]>([]);
+  // Разломы живут в сторе: вкладки монтируются по одной, и локальное состояние
+  // пропадало при уходе с карты. Их же рисует 3D-сцена.
+  const faults = useStore((s) => s.faults);
+  const setFaults = useStore((s) => s.setFaults);
   const [draftFault, setDraftFault] = useState<Pt[]>([]);
   const [draftFaultMarkerIds, setDraftFaultMarkerIds] = useState<string[]>([]);
   const [drawingFault, setDrawingFault] = useState(false);
   const faultDragRef = useRef<{ faultId: string; idx: number } | null>(null);
-  const faultSeqRef = useRef(0);
   const [uncOn, setUncOn] = useState(false);
   const [spread, setSpread] = useState(20);
 
@@ -474,10 +475,12 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     setDraftFaultMarkerIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
   const finishFaultDraw = () => {
     if (draftFault.length < 2 || draftFaultMarkerIds.length === 0) return;
-    faultSeqRef.current += 1;
+    // Номер берётся из уже существующих разломов: счётчик в компоненте
+    // обнулялся бы при возврате на вкладку и выдавал дубли id.
+    const n = faults.reduce((mx, f) => Math.max(mx, Number(f.id.replace(/\D/g, '')) || 0), 0) + 1;
     setFaults((fs) => [...fs, {
-      id: `fault-${faultSeqRef.current}`,
-      label: `Разлом ${faultSeqRef.current}`,
+      id: `fault-${n}`,
+      label: `Разлом ${n}`,
       markerIds: mappable.filter((m) => draftFaultMarkerIds.includes(m.id)).map((m) => m.id), // keep пласт order
       trace: draftFault,
     }]);
