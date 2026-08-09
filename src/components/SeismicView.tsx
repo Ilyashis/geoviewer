@@ -5,6 +5,7 @@ import {
   sampleNodes, interpolateHorizon, tieToWells, sampleHorizonAt, EARTH,
   type HorizonNode, type FieldSection,
 } from '../seismic';
+import { SurfacePicker } from './SurfacePicker';
 import { buildSurface } from '../core/framework';
 import { metricWells } from '../wells/coords';
 import { segmentIntersection } from '../core/geom/intersect';
@@ -451,14 +452,15 @@ export function SeismicView({ wells, markers }: Props) {
         {!isImported && horizonList.length > 0 && (
           <>
             <div className="seismic-panel-h seismic-panel-h2">Снять горизонт</div>
-            <div className="seismic-picks">
-              {horizonList.map((h) => (
-                <button key={h.label} className={`seismic-pick ${edit?.label === h.label ? 'on' : ''}`}
-                  onClick={() => snap(h.label, h.color, h.seedTwt)}>
-                  <span className="seismic-dot" style={{ background: h.color }} />{h.label}
-                </button>
-              ))}
-            </div>
+            <SurfacePicker
+              label="Пласт"
+              options={horizonList.map((h) => ({ id: h.label, label: h.label, color: h.color }))}
+              value={edit?.label}
+              onChange={(label) => {
+                const h = horizonList.find((x) => x.label === label);
+                if (h) snap(h.label, h.color, h.seedTwt);
+              }}
+            />
             {edit && <div className="seismic-hint">Перетащите узлы, чтобы поправить горизонт.</div>}
             {crossHint && <div className="seismic-hint">{crossHint}</div>}
           </>

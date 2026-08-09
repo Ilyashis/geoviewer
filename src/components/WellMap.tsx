@@ -6,6 +6,7 @@ import type { Pt } from '../core/geom/polygon';
 import { estimateThrow } from '../core/geom/fault';
 import { buildSurface, type ControlPoint } from '../core/framework';
 import { clusterPoints, clusterGap } from '../core/geom/cluster';
+import { SurfacePicker } from './SurfacePicker';
 import { tvdss } from '../core/crs';
 import { useStore } from '../store';
 import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../wells/deviation';
@@ -107,6 +108,11 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       (m) => Object.keys(m.depths).filter((id) => coordIds.has(id) && Number.isFinite(m.depths[id])).length >= 3
     );
   }, [markers, coordWells, schematic]);
+
+  const surfOptions = useMemo(
+    () => mappable.map((m) => ({ id: m.id, label: m.label, color: m.color })),
+    [mappable],
+  );
 
   const surface = mappable.find((m) => m.id === surfaceId) ?? mappable[0] ?? null;
   const top = mappable.find((m) => m.id === topId) ?? mappable[0] ?? null;
@@ -557,15 +563,6 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     : [];
   const draftFaultScreenPts = layout ? draftFault.map((p) => layout.toPx(p.x, p.y)) : [];
 
-  const SurfBtns = ({ selId, onSel }: { selId: string | undefined; onSel: (id: string) => void }) => (
-    <>
-      {mappable.map((m) => (
-        <button key={m.id} className={`map-surf ${m.id === selId ? 'on' : ''}`} onClick={() => onSel(m.id)}>
-          <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
-        </button>
-      ))}
-    </>
-  );
 
   return (
     <div className="map" ref={wrapRef}>
@@ -637,20 +634,11 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
               disabled={mappable.length < 2}>Изохора</button>
           </div>
           {mode === 'structure' ? (
-            <div className="map-surf-row">
-              <span className="map-row-label">Пласт</span>
-              <SurfBtns selId={surface?.id} onSel={setSurfaceId} />
-            </div>
+            <SurfacePicker label="Пласт" options={surfOptions} value={surface?.id} onChange={setSurfaceId} />
           ) : (
             <>
-              <div className="map-surf-row">
-                <span className="map-row-label">Кровля</span>
-                <SurfBtns selId={top?.id} onSel={setTopId} />
-              </div>
-              <div className="map-surf-row">
-                <span className="map-row-label">Подошва</span>
-                <SurfBtns selId={base?.id} onSel={setBaseId} />
-              </div>
+              <SurfacePicker label="Кровля" options={surfOptions} value={top?.id} onChange={setTopId} />
+              <SurfacePicker label="Подошва" options={surfOptions} value={base?.id} onChange={setBaseId} />
             </>
           )}
         </div>
