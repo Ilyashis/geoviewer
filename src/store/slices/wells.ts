@@ -13,6 +13,7 @@ import { generateDemoLithology } from '../../plate/demoLithology';
 import { mapLithology, mapSaturation } from '../../lithology/map';
 import { buildDemoLas } from '../../sampleData';
 import { uid } from '../../util/id';
+import { seedMarkerDepths } from '../../wells/seed';
 import { DEMO_TOPS, demoSurvey, norm, wellIndex } from '../shared';
 import type { Store } from '../types';
 
@@ -153,13 +154,23 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
             color: t.color,
             depths: { [well.id]: t.base },
           }));
-        } else if (markers.length) {
-          // Extend existing markers to the newly added well (stepped depth).
+        } else if (markers.length && isDemo) {
+          // The curated demo builds a deliberate staircase across its
+          // synthetic field — a fixed per-marker step, not a real seed.
           markers = markers.map((m, i) => {
             const existing = Object.values(m.depths);
             const base = existing.length ? Math.max(...existing) : 2050;
-            const step = isDemo ? (DEMO_TOPS[i]?.step ?? 6) : 6;
-            return { ...m, depths: { ...m.depths, [well.id]: base + step } };
+            return { ...m, depths: { ...m.depths, [well.id]: base + (DEMO_TOPS[i]?.step ?? 6) } };
+          });
+        } else if (markers.length) {
+          // A real well joining an already-picked field: seed each marker
+          // from its nearest neighbour's TVDSS (see wells/seed) rather than
+          // an arbitrary constant offset, which had no relation to this
+          // well's position, KB or trajectory at all.
+          markers = markers.map((m) => {
+            const seeded = seedMarkerDepths(wells, m.depths);
+            const outcome = seeded[well.id];
+            return outcome ? { ...m, depths: { ...m.depths, [well.id]: outcome.depth } } : m;
           });
         }
 

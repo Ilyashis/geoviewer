@@ -70,3 +70,55 @@ describe('importWellKb', () => {
     expect(r).toMatchObject({ wells: 0, unmatchedWells: ['НЕТ-1'] });
   });
 });
+
+describe('затравка разбивок (addMarkerAtDepth и новая скважина в поле)', () => {
+  beforeEach(() => useStore.getState().clearAll());
+
+  const las = (name: string, x: number, y: number, kb: number) => `~V
+ VERS. 2.0 :
+ WRAP. NO :
+~W
+ NULL. -999.25 :
+ WELL. ${name} :
+ XCOORD.M ${x} :
+ YCOORD.M ${y} :
+ EKB.M ${kb} :
+~C
+ DEPT.M :
+ GR.GAPI :
+~A
+1900 40
+2900 40`;
+
+  it('на активной скважине ставит ровно указанную глубину', () => {
+    useStore.getState().loadLasText(las('A', 0, 0, 20), 'A.las');
+    const a = useStore.getState().wells[0];
+    useStore.getState().addMarkerAtDepth(a.id, 2500);
+    expect(useStore.getState().markers[0].depths[a.id]).toBe(2500);
+  });
+
+  it('затравливает уже загруженную скважину по TVDSS, а не той же глубиной', () => {
+    useStore.getState().loadLasText(las('A', 0, 0, 40), 'A.las');
+    useStore.getState().loadLasText(las('B', 100, 0, 15), 'B.las');
+    const [a, b] = useStore.getState().wells;
+
+    useStore.getState().addMarkerAtDepth(a.id, 2500);
+
+    const depths = useStore.getState().markers[0].depths;
+    expect(depths[a.id]).toBe(2500);
+    // TVDSS(A) = 2500 − 40 = 2460 = TVD(B) − 15 ⇒ MD(B) = 2475, не 2500:
+    // разница KB не должна превращаться в готовую ошибку разбивки.
+    expect(depths[b.id]).toBeCloseTo(2475, 6);
+  });
+
+  it('новая скважина, добавленная в поле с уже расставленной разбивкой, затравливается от ближайшей', () => {
+    useStore.getState().loadLasText(las('A', 0, 0, 40), 'A.las');
+    const a = useStore.getState().wells[0];
+    useStore.getState().addMarkerAtDepth(a.id, 2500);
+
+    useStore.getState().loadLasText(las('B', 100, 0, 15), 'B.las');
+    const b = useStore.getState().wells.find((w) => w.name === 'B')!;
+
+    expect(useStore.getState().markers[0].depths[b.id]).toBeCloseTo(2475, 6);
+  });
+});

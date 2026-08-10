@@ -2,6 +2,7 @@ import type { StateCreator } from 'zustand';
 import type { Marker } from '../../types';
 import type { TopRow } from '../../tops/csv';
 import { uid } from '../../util/id';
+import { seedMarkerDepths } from '../../wells/seed';
 import { MARKER_COLORS, norm, wellIndex } from '../shared';
 import type { Store } from '../types';
 
@@ -14,7 +15,14 @@ export interface ImportSummary {
 export interface MarkersSlice {
   markers: Marker[];
   selectedMarkerId: string | null;
-  addMarkerAtDepth: (depth: number) => void;
+  /**
+   * `wellId` is the well the pick actually happened on — the one depth in
+   * this call that is a real observation. Every other well is seeded from its
+   * nearest already-picked neighbour (see `wells/seed`) rather than copied
+   * flat, so a brand-new marker doesn't start as a perfectly horizontal line
+   * cutting through wells with different KBs and trajectories.
+   */
+  addMarkerAtDepth: (wellId: string, depth: number) => void;
   updateMarkerDepth: (markerId: string, wellId: string, depth: number) => void;
   removeMarkerDepth: (markerId: string, wellId: string) => void;
   renameMarker: (markerId: string, label: string) => void;
@@ -27,10 +35,11 @@ export const createMarkersSlice: StateCreator<Store, [], [], MarkersSlice> = (se
   markers: [],
   selectedMarkerId: null,
 
-  addMarkerAtDepth: (depth) =>
+  addMarkerAtDepth: (wellId, depth) =>
     set((s) => {
+      const seeded = seedMarkerDepths(s.wells, { [wellId]: depth });
       const depths: Record<string, number> = {};
-      for (const w of s.wells) depths[w.id] = depth;
+      for (const [id, outcome] of Object.entries(seeded)) depths[id] = outcome.depth;
       const marker: Marker = {
         id: `marker-${uid()}`,
         label: `Top ${s.markers.length + 1}`,

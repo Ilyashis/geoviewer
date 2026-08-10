@@ -278,6 +278,7 @@ export default function App() {
           <WellTie
             wells={wells}
             markers={markers}
+            activeWellId={activeWellId}
             updateMarkerDepth={updateMarkerDepth}
             removeMarkerDepth={removeMarkerDepth}
             renameMarker={renameMarker}
@@ -320,7 +321,7 @@ export default function App() {
                   onActivate={() => setActiveWell(w.id)}
                   onRemove={() => removeWell(w.id)}
                   tool={tool}
-                  onCreateMarker={addMarkerAtDepth}
+                  onCreateMarker={(depth) => addMarkerAtDepth(w.id, depth)}
                   focused={w.id === focusedWellId}
                   onToggleFocus={() => setFocusedWellId((cur) => (cur === w.id ? null : w.id))}
                   hidden={hiddenTracks[w.id]}

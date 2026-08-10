@@ -5,16 +5,17 @@ import type { Marker, Well } from '../types';
 interface Props {
   wells: Well[];
   markers: Marker[];
+  activeWellId: string | null;
   updateMarkerDepth: (markerId: string, wellId: string, depth: number) => void;
   removeMarkerDepth: (markerId: string, wellId: string) => void;
   renameMarker: (markerId: string, label: string) => void;
   removeMarker: (markerId: string) => void;
-  addMarkerAtDepth: (depth: number) => void;
+  addMarkerAtDepth: (wellId: string, depth: number) => void;
 }
 
 /** Editable stratigraphy grid: surfaces × wells, with misties and completeness. */
 export function WellTie({
-  wells, markers, updateMarkerDepth, removeMarkerDepth, renameMarker, removeMarker, addMarkerAtDepth,
+  wells, markers, activeWellId, updateMarkerDepth, removeMarkerDepth, renameMarker, removeMarker, addMarkerAtDepth,
 }: Props) {
   const midDepth = useMemo(() => {
     let mn = Infinity, mx = -Infinity;
@@ -24,6 +25,11 @@ export function WellTie({
     }
     return Number.isFinite(mn) ? Math.round((mn + mx) / 2) : 2000;
   }, [wells]);
+  // The tie table has no per-well click to anchor a real pick on, so the
+  // active well stands in as the origin — every other well is then seeded
+  // from its nearest neighbour (see addMarkerAtDepth) instead of copying
+  // this same number flat across the field.
+  const originWellId = activeWellId ?? wells[0]?.id;
 
   if (wells.length === 0) {
     return (
@@ -45,7 +51,7 @@ export function WellTie({
           <div className="tie-eyebrow">Привязка</div>
           <h1 className="tie-title">Стратиграфия по скважинам</h1>
         </div>
-        <button className="btn" onClick={() => addMarkerAtDepth(midDepth)}>
+        <button className="btn" disabled={!originWellId} onClick={() => originWellId && addMarkerAtDepth(originWellId, midDepth)}>
           <Plus size={15} strokeWidth={1.9} /> Разбивка
         </button>
       </div>
