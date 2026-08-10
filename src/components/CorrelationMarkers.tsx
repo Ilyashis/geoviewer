@@ -153,12 +153,19 @@ export function CorrelationMarkers({
             {defined.map((p) => {
               const y = yOf(p, m.depths[p.wellId]);
               if (!inView(y)) return null;
+              // A seeded (not yet hand-confirmed) pick draws hollow — filled
+              // in the marker colour would read identically to a real pick,
+              // and this is exactly the surface where you'd drag it to fix.
+              const seeded = m.seeded?.includes(p.wellId);
               return (
                 <g key={p.wellId}>
                   <circle className="handle" cx={p.x0} cy={y} r={11} fill="transparent"
                     onMouseDown={(e) => startDrag(e, m.id, p.wellId)} />
                   <circle cx={p.x0} cy={y} r={selected ? 5 : 4}
-                    className="dot" fill={m.color} stroke="var(--panel)" strokeWidth={1.5} />
+                    className="dot" fill={seeded ? 'var(--panel)' : m.color}
+                    stroke={seeded ? m.color : 'var(--panel)'} strokeWidth={seeded ? 2 : 1.5}>
+                    {seeded && <title>Затравка по ближайшей скважине — перетащите, чтобы подтвердить</title>}
+                  </circle>
                 </g>
               );
             })}

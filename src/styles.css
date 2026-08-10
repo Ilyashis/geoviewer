@@ -453,6 +453,15 @@ body {
 .tie-depth:focus { outline: none; background: var(--stripe); box-shadow: inset 0 0 0 1px var(--accent); }
 .tie-depth.empty { color: var(--text-3); background: repeating-linear-gradient(-45deg, transparent, transparent 5px, var(--stripe) 5px, var(--stripe) 6px); }
 .tie-depth::placeholder { color: var(--text-3); }
+/* Затравка по ближайшей скважине — не пик геолога, отличается и от пустой
+   ячейки (штриховка), и от подтверждённого значения (сплошной текст). */
+.tie-depth.seeded { color: var(--warn, #e8913a); font-style: italic; }
+.tie-legend {
+  display: flex; align-items: center; gap: 7px; padding: 8px 12px;
+  font-size: 12px; color: var(--text-2); border-bottom: 1px solid var(--hairline);
+}
+.tie-depth-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.tie-depth-swatch.seeded { background: var(--warn, #e8913a); opacity: 0.55; }
 
 .tie-spread-val { text-align: right; padding: 8px 12px; font-family: var(--mono); color: var(--text-2); font-variant-numeric: tabular-nums; }
 .tie-table tbody tr:hover td { background: var(--stripe); }

@@ -60,6 +60,12 @@ export function WellTie({
         <p className="tie-empty">Разбивок пока нет. Добавьте через кнопку выше или инструментом «Маркер» на корр. схеме.</p>
       ) : (
         <div className="tie-scroll">
+          {markers.some((m) => m.seeded?.length) && (
+            <p className="tie-legend">
+              <span className="tie-depth-swatch seeded" /> затравка по ближайшей скважине — не настоящий пик, проверьте
+              глубину
+            </p>
+          )}
           <table className="tie-table">
             <thead>
               <tr>
@@ -85,11 +91,13 @@ export function WellTie({
                     {wells.map((w) => {
                       const d = m.depths[w.id];
                       const has = Number.isFinite(d);
+                      const seeded = has && m.seeded?.includes(w.id);
                       return (
                         <td key={w.id}>
                           <input
-                            className={`tie-depth ${has ? '' : 'empty'}`}
+                            className={`tie-depth ${has ? '' : 'empty'} ${seeded ? 'seeded' : ''}`}
                             type="number" step={0.1} placeholder="—"
+                            title={seeded ? 'Затравка по ближайшей скважине — не настоящий пик, проверьте глубину' : undefined}
                             value={has ? Number((d as number).toFixed(2)) : ''}
                             onChange={(e) => {
                               const v = e.target.value.trim();

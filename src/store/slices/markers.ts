@@ -39,21 +39,31 @@ export const createMarkersSlice: StateCreator<Store, [], [], MarkersSlice> = (se
     set((s) => {
       const seeded = seedMarkerDepths(s.wells, { [wellId]: depth });
       const depths: Record<string, number> = {};
-      for (const [id, outcome] of Object.entries(seeded)) depths[id] = outcome.depth;
+      const seededIds: string[] = [];
+      for (const [id, outcome] of Object.entries(seeded)) {
+        depths[id] = outcome.depth;
+        if (id !== wellId) seededIds.push(id); // everyone but the real pick is a guess
+      }
       const marker: Marker = {
         id: `marker-${uid()}`,
         label: `Top ${s.markers.length + 1}`,
         color: MARKER_COLORS[s.markers.length % MARKER_COLORS.length],
         depths,
+        seeded: seededIds,
       };
       return { markers: [...s.markers, marker], selectedMarkerId: marker.id };
     }),
 
   updateMarkerDepth: (markerId, wellId, depth) =>
     set((s) => ({
-      markers: s.markers.map((m) =>
-        m.id === markerId ? { ...m, depths: { ...m.depths, [wellId]: depth } } : m
-      ),
+      markers: s.markers.map((m) => {
+        if (m.id !== markerId) return m;
+        // A hand edit — drag or typed — is the geologist looking at this well
+        // and deciding on a depth. Whatever the previous value was, it's no
+        // longer a guess, even if the number happens to land unchanged.
+        const seeded = m.seeded?.filter((id) => id !== wellId);
+        return { ...m, depths: { ...m.depths, [wellId]: depth }, seeded };
+      }),
     })),
 
   removeMarkerDepth: (markerId, wellId) =>
@@ -61,7 +71,7 @@ export const createMarkersSlice: StateCreator<Store, [], [], MarkersSlice> = (se
       markers: s.markers.map((m) => {
         if (m.id !== markerId) return m;
         const { [wellId]: _drop, ...rest } = m.depths;
-        return { ...m, depths: rest };
+        return { ...m, depths: rest, seeded: m.seeded?.filter((id) => id !== wellId) };
       }),
     })),
 
@@ -100,7 +110,11 @@ export const createMarkersSlice: StateCreator<Store, [], [], MarkersSlice> = (se
     for (const [surface, depths] of surfaces) {
       const existingIdx = byLabel.get(norm(surface));
       if (existingIdx != null) {
-        markers[existingIdx] = { ...markers[existingIdx], depths: { ...markers[existingIdx].depths, ...depths } };
+        const prev = markers[existingIdx];
+        // A pick from an imported file is a real, external observation — it
+        // overrides whatever guess (if any) sat there before.
+        const seeded = prev.seeded?.filter((id) => !(id in depths));
+        markers[existingIdx] = { ...prev, depths: { ...prev.depths, ...depths }, seeded };
       } else {
         const marker: Marker = {
           id: `marker-${uid()}`,

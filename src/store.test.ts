@@ -122,3 +122,95 @@ describe('затравка разбивок (addMarkerAtDepth и новая ск
     expect(useStore.getState().markers[0].depths[b.id]).toBeCloseTo(2475, 6);
   });
 });
+
+describe('провенанс затравленных глубин: seeded не должен сойти за настоящий пик', () => {
+  beforeEach(() => useStore.getState().clearAll());
+
+  const las = (name: string, x: number, y: number, kb: number) => `~V
+ VERS. 2.0 :
+ WRAP. NO :
+~W
+ NULL. -999.25 :
+ WELL. ${name} :
+ XCOORD.M ${x} :
+ YCOORD.M ${y} :
+ EKB.M ${kb} :
+~C
+ DEPT.M :
+ GR.GAPI :
+~A
+1900 40
+2900 40`;
+
+  it('реальный пик не помечается как затравка', () => {
+    useStore.getState().loadLasText(las('A', 0, 0, 40), 'A.las');
+    const a = useStore.getState().wells[0];
+    useStore.getState().addMarkerAtDepth(a.id, 2500);
+    expect(useStore.getState().markers[0].seeded ?? []).not.toContain(a.id);
+  });
+
+  it('соседи, получившие глубину без клика, помечены как затравка', () => {
+    useStore.getState().loadLasText(las('A', 0, 0, 40), 'A.las');
+    useStore.getState().loadLasText(las('B', 100, 0, 15), 'B.las');
+    const [a, b] = useStore.getState().wells;
+    useStore.getState().addMarkerAtDepth(a.id, 2500);
+    expect(useStore.getState().markers[0].seeded).toEqual([b.id]);
+  });
+
+  it('новая скважина, подхватившая соседнюю разбивку, тоже помечена', () => {
+    useStore.getState().loadLasText(las('A', 0, 0, 40), 'A.las');
+    const a = useStore.getState().wells[0];
+    useStore.getState().addMarkerAtDepth(a.id, 2500);
+
+    useStore.getState().loadLasText(las('B', 100, 0, 15), 'B.las');
+    const b = useStore.getState().wells.find((w) => w.name === 'B')!;
+    expect(useStore.getState().markers[0].seeded).toContain(b.id);
+  });
+
+  it('ручная правка снимает пометку, даже если число не изменилось', () => {
+    useStore.getState().loadLasText(las('A', 0, 0, 40), 'A.las');
+    useStore.getState().loadLasText(las('B', 100, 0, 15), 'B.las');
+    const [a, b] = useStore.getState().wells;
+    useStore.getState().addMarkerAtDepth(a.id, 2500);
+
+    const markerId = useStore.getState().markers[0].id;
+    const seededDepth = useStore.getState().markers[0].depths[b.id];
+    useStore.getState().updateMarkerDepth(markerId, b.id, seededDepth); // геолог посмотрел и согласился
+
+    expect(useStore.getState().markers[0].seeded ?? []).not.toContain(b.id);
+    expect(useStore.getState().markers[0].depths[b.id]).toBe(seededDepth); // само число не изменилось
+  });
+
+  it('удаление глубины снимает пометку вместе с ней', () => {
+    useStore.getState().loadLasText(las('A', 0, 0, 40), 'A.las');
+    useStore.getState().loadLasText(las('B', 100, 0, 15), 'B.las');
+    const [a, b] = useStore.getState().wells;
+    useStore.getState().addMarkerAtDepth(a.id, 2500);
+
+    const markerId = useStore.getState().markers[0].id;
+    useStore.getState().removeMarkerDepth(markerId, b.id);
+
+    expect(useStore.getState().markers[0].seeded ?? []).not.toContain(b.id);
+    expect(useStore.getState().markers[0].depths[b.id]).toBeUndefined();
+  });
+
+  it('импорт разбивок из файла перекрывает затравку настоящим значением', () => {
+    useStore.getState().loadLasText(las('A', 0, 0, 40), 'A.las');
+    useStore.getState().loadLasText(las('B', 100, 0, 15), 'B.las');
+    const [a, b] = useStore.getState().wells;
+    useStore.getState().addMarkerAtDepth(a.id, 2500);
+
+    const label = useStore.getState().markers[0].label;
+    useStore.getState().importTops([{ well: 'B', surface: label, depth: 2510 }]);
+
+    const marker = useStore.getState().markers[0];
+    expect(marker.depths[b.id]).toBe(2510); // импорт побеждает затравку
+    expect(marker.seeded ?? []).not.toContain(b.id);
+  });
+
+  it('разбивка, целиком созданная импортом, не содержит затравленных глубин', () => {
+    useStore.getState().loadLasText(las('A', 0, 0, 40), 'A.las');
+    useStore.getState().importTops([{ well: 'A', surface: 'Import Top', depth: 2500 }]);
+    expect(useStore.getState().markers[0].seeded ?? []).toEqual([]);
+  });
+});

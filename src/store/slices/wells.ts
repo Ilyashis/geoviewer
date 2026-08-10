@@ -168,9 +168,14 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
           // an arbitrary constant offset, which had no relation to this
           // well's position, KB or trajectory at all.
           markers = markers.map((m) => {
-            const seeded = seedMarkerDepths(wells, m.depths);
-            const outcome = seeded[well.id];
-            return outcome ? { ...m, depths: { ...m.depths, [well.id]: outcome.depth } } : m;
+            const proposed = seedMarkerDepths(wells, m.depths);
+            const outcome = proposed[well.id];
+            if (!outcome) return m;
+            return {
+              ...m,
+              depths: { ...m.depths, [well.id]: outcome.depth },
+              seeded: [...(m.seeded ?? []), well.id],
+            };
           });
         }
 
@@ -200,7 +205,7 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
         ? []
         : s.markers.map((m) => {
             const { [id]: _removed, ...rest } = m.depths;
-            return { ...m, depths: rest };
+            return { ...m, depths: rest, seeded: m.seeded?.filter((wid) => wid !== id) };
           });
       return {
         wells,

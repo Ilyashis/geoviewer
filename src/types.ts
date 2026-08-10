@@ -82,6 +82,15 @@ export interface Marker {
   label: string;
   color: string;
   depths: Record<string, number>;
+  /**
+   * Well ids whose depth is a nearest-neighbour seed (`wells/seed.ts`), not a
+   * pick the geologist actually made. Before variable seeding this was moot —
+   * a flat line across every well was self-evidently a guess. Once the seed
+   * follows TVDSS and dip-adjusts per well, it looks exactly like a real pick,
+   * so provenance has to be tracked explicitly or it silently reads as one.
+   * Cleared the moment a well's depth is touched by hand or by an import.
+   */
+  seeded?: string[];
 }
 
 /** How a single curve is drawn on a track. */
