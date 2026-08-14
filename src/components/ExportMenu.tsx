@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { Download, Milestone, Layers, Image as ImageIcon, FileText } from 'lucide-react';
+import { Download, Milestone, Layers, Image as ImageIcon, FileText, Route } from 'lucide-react';
 import { useStore } from '../store';
 import { buildTopsCsv } from '../export/tops';
 import { buildLithologyCsv } from '../export/lithology';
+import { buildDevFile } from '../export/dev';
 import { exportCorrelationPng, exportCorrelationJpeg } from '../export/image';
 import { jpegToPdf } from '../export/pdf';
 import { downloadText, triggerDownload } from '../export/download';
+import { metricWells } from '../wells/coords';
 
 interface Props {
   bodyRef: RefObject<HTMLElement>;
@@ -43,6 +45,16 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
 
   const hasLithology = wells.some((w) => w.lithology.length > 0);
 
+  const coordWells = metricWells(wells).filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y));
+  const exportDev = () => {
+    // One file per well — that's what .dev is — so stagger the downloads a
+    // little; firing a dozen at once in one tick loses some of them.
+    coordWells.forEach((w, i) => {
+      setTimeout(() => downloadText(`${w.name}.dev`, buildDevFile(w), 'text/plain'), i * 150);
+    });
+    setOpen(false);
+  };
+
   const exportPng = () => {
     const url = bodyRef.current && exportCorrelationPng(bodyRef.current, markers, depthWindow);
     if (url) triggerDownload(`correlation-${stamp()}.png`, url);
@@ -70,6 +82,9 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
           </button>
           <button className="menu-item" onClick={exportLithoCsv} disabled={!hasLithology}>
             <Layers size={15} strokeWidth={1.75} /> Литология (CSV)
+          </button>
+          <button className="menu-item" onClick={exportDev} disabled={coordWells.length === 0} title="Petrel-совместимый .dev на каждую скважину с координатами">
+            <Route size={15} strokeWidth={1.75} /> Траектории (.dev)
           </button>
           <button className="menu-item" onClick={exportPng}>
             <ImageIcon size={15} strokeWidth={1.75} /> Планшет (PNG)

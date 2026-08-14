@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { Navigation } from 'lucide-react';
+import { Navigation, Download } from 'lucide-react';
 import type { Marker, Well } from '../types';
 import { contourLevels } from '../core/geom/grid';
 import type { Pt } from '../core/geom/polygon';
@@ -18,6 +18,7 @@ import { aggregateZone, DEFAULT_PETRO, type PetroParams } from '../wells/petroph
 import { monteCarlo, makeTriParams } from '../reserves/uncertainty';
 import { buildReservesCsv, renderReservesJpeg, type ReservesInput } from '../export/reserves';
 import { jpegToPdf } from '../export/pdf';
+import { buildZmapGrid } from '../export/zmap';
 import { downloadText, triggerDownload } from '../export/download';
 import { FileText, Table } from 'lucide-react';
 
@@ -454,6 +455,10 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     const img = renderReservesJpeg(r);
     triggerDownload(`reserves-${fileStamp()}.pdf`, URL.createObjectURL(jpegToPdf(img.dataUrl, img.width, img.height)), true);
   };
+  const exportZmap = () => {
+    if (!grid || !surface) return;
+    downloadText(`${surface.label}-${fileStamp()}.dat`, buildZmapGrid(grid, surface.label), 'text/plain');
+  };
 
   // --- Pinch-out polygon: click-to-place vertices, then drag any of them ---
   // Checking the box keeps an already-drawn polygon (like the ВНК depth persists
@@ -679,7 +684,12 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
               disabled={mappable.length < 2}>Изохора</button>
           </div>
           {mode === 'structure' ? (
-            <SurfacePicker label="Пласт" options={surfOptions} value={surface?.id} onChange={setSurfaceId} />
+            <>
+              <SurfacePicker label="Пласт" options={surfOptions} value={surface?.id} onChange={setSurfaceId} />
+              <button className="map-export-btn" disabled={!grid} onClick={exportZmap} title="Экспорт грида в формате Petrel (ZMAP+)">
+                <Download size={13} strokeWidth={1.75} /> Грид (ZMAP+)
+              </button>
+            </>
           ) : (
             <>
               <SurfacePicker label="Кровля" options={surfOptions} value={top?.id} onChange={setTopId} />

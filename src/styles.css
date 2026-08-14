@@ -488,6 +488,13 @@ body {
   /* Оставляем место легенде внизу слева и никогда не выходим за холст. */
   max-height: 66%; overflow-y: auto;
 }
+.map-export-btn {
+  display: inline-flex; align-items: center; gap: 5px; width: fit-content;
+  padding: 3px 9px; border-radius: 100px; border: 1px solid var(--border); background: var(--canvas);
+  color: var(--text-2); font-size: 11px; cursor: pointer;
+}
+.map-export-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent, #4dabf7); }
+.map-export-btn:disabled { color: var(--text-3); cursor: not-allowed; }
 .map-mode { display: inline-flex; gap: 4px; background: var(--canvas); border: 1px solid var(--border); border-radius: 100px; padding: 3px; width: fit-content; }
 .map-mode-btn { background: none; border: 0; color: var(--text-2); font-size: 12px; padding: 4px 12px; border-radius: 100px; cursor: pointer; }
 .map-mode-btn:hover:not(:disabled) { color: var(--text); }
