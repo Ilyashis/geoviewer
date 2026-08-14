@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Marker, Well } from '../types';
 import { dataRadius, niceStep, sampleGrid, type ControlPoint } from '../core/geom/grid';
-import { projectOntoPolyline, sampleAlongPolyline } from '../core/geom/line';
+import { polylineCrossings, projectOntoPolyline, sampleAlongPolyline } from '../core/geom/line';
 import { buildSurface, type Mesh } from '../core/framework';
 import { tvdss } from '../core/crs';
 import { useStore } from '../store';
@@ -136,6 +136,16 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, mesh, shown, faults, coordWells, trajs]);
 
+  /** Where each fault's plan trace crosses the section line. `FaultDef` has no
+   * dip, only a plan trace, so this can only mark *where* it cuts the section
+   * — a vertical mark, not an invented inclined plane. */
+  const faultCrossings = useMemo(() => {
+    if (!section || section.points.length < 2) return [];
+    return faults
+      .map((f) => ({ fault: f, arcs: polylineCrossings(section.points, f.trace) }))
+      .filter((fc) => fc.arcs.length > 0);
+  }, [section, faults]);
+
   const draw = () => {
     const canvas = canvasRef.current;
     if (!canvas || !section) return;
@@ -206,6 +216,25 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
       }
       ctx.stroke();
     }
+
+    // Fault crossings: a dashed vertical mark at the arc where the trace cuts
+    // the line — no dip is stored, so this is honest about not knowing the angle.
+    const warn = v('--warn', '#ff9f0a');
+    ctx.font = '10px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    for (const { fault, arcs } of faultCrossings) {
+      for (const arc of arcs) {
+        if (arc < 0 || arc > lineLength) continue;
+        const x = xOf(arc);
+        ctx.strokeStyle = warn; ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, T + ph); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = warn;
+        ctx.fillText(fault.label, x, T + 12);
+      }
+    }
+    ctx.font = '11px ui-monospace, monospace';
 
     // Wells: a stick spanning their logged range, lithology if they have it,
     // then each shown marker's actual pick as a dot on top of the trace.

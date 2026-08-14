@@ -78,3 +78,37 @@ export function sampleAlongPolyline(pts: Pt[], step: number): (Pt & { arc: numbe
   }
   return out;
 }
+
+function segmentIntersectionT(p1: Pt, p2: Pt, p3: Pt, p4: Pt): number | null {
+  const d1x = p2.x - p1.x, d1y = p2.y - p1.y;
+  const d2x = p4.x - p3.x, d2y = p4.y - p3.y;
+  const denom = d1x * d2y - d1y * d2x;
+  if (Math.abs(denom) < 1e-9) return null; // parallel (or collinear) — no single crossing point
+  const t = ((p3.x - p1.x) * d2y - (p3.y - p1.y) * d2x) / denom;
+  const u = ((p3.x - p1.x) * d1y - (p3.y - p1.y) * d1x) / denom;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return t;
+}
+
+/**
+ * Arc-length positions along `line` where the polyline `other` crosses it —
+ * used to mark a fault trace on a cross-section. A fault is stored as a plan
+ * trace with no dip (`FaultDef` has no plane), so this only answers *where*
+ * along the section it cuts, not at what angle; the caller draws that as a
+ * vertical mark rather than an invented inclined plane.
+ */
+export function polylineCrossings(line: Pt[], other: Pt[]): number[] {
+  if (line.length < 2 || other.length < 2) return [];
+  const arcs: number[] = [];
+  let cum = 0;
+  for (let i = 1; i < line.length; i++) {
+    const a = line[i - 1], b = line[i];
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+    for (let j = 1; j < other.length; j++) {
+      const t = segmentIntersectionT(a, b, other[j - 1], other[j]);
+      if (t != null) arcs.push(cum + t * segLen);
+    }
+    cum += segLen;
+  }
+  return arcs.sort((x, y) => x - y);
+}

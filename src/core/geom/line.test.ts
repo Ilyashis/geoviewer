@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { polylineLength, projectOntoPolyline, sampleAlongPolyline } from './line';
+import { polylineCrossings, polylineLength, projectOntoPolyline, sampleAlongPolyline } from './line';
 
 const line = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]; // L-shape
 
@@ -67,5 +67,37 @@ describe('sampleAlongPolyline', () => {
 
   it('одна точка — вырожденная выборка без деления на ноль', () => {
     expect(sampleAlongPolyline([{ x: 5, y: 5 }], 10)).toEqual([{ x: 5, y: 5, arc: 0 }]);
+  });
+});
+
+describe('polylineCrossings', () => {
+  it('пересечение на первом отрезке даёт arc до точки пересечения', () => {
+    const other = [{ x: 50, y: -20 }, { x: 50, y: 20 }];
+    expect(polylineCrossings(line, other)).toEqual([50]);
+  });
+
+  it('учитывает излом — пересечение на втором отрезке', () => {
+    const other = [{ x: 80, y: 50 }, { x: 120, y: 50 }];
+    const arcs = polylineCrossings(line, other);
+    expect(arcs).toHaveLength(1);
+    expect(arcs[0]).toBeCloseTo(150, 6); // 100 (первый отрезок) + 50
+  });
+
+  it('несколько пересечений — все найдены и отсортированы', () => {
+    const other = [{ x: 20, y: -10 }, { x: 20, y: 10 }, { x: 70, y: 10 }, { x: 70, y: -10 }];
+    const arcs = polylineCrossings(line, other);
+    expect(arcs).toHaveLength(2);
+    expect(arcs[0]).toBeCloseTo(20, 6);
+    expect(arcs[1]).toBeCloseTo(70, 6);
+  });
+
+  it('нет пересечений — пустой массив', () => {
+    const other = [{ x: 500, y: 500 }, { x: 600, y: 600 }];
+    expect(polylineCrossings(line, other)).toEqual([]);
+  });
+
+  it('вырожденные линии (меньше двух точек) не пересекаются', () => {
+    expect(polylineCrossings(line, [{ x: 50, y: 0 }])).toEqual([]);
+    expect(polylineCrossings([{ x: 50, y: 0 }], [{ x: 0, y: -1 }, { x: 0, y: 1 }])).toEqual([]);
   });
 });
