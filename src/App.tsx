@@ -121,15 +121,27 @@ export default function App() {
       // Track data-slice identity so unrelated state changes (selection, project
       // list) don't trigger a save — and the initial hydration above never does.
       const g = useStore.getState();
-      let last = { wells: g.wells, markers: g.markers, activeWellId: g.activeWellId, hiddenTracks: g.hiddenTracks };
+      let last = {
+        wells: g.wells, markers: g.markers, activeWellId: g.activeWellId, hiddenTracks: g.hiddenTracks,
+        faults: g.faults, sections: g.sections, checkshots: g.checkshots, segyLines: g.segyLines, seismicHorizons: g.seismicHorizons,
+      };
       unsub = useStore.subscribe((s) => {
-        if (s.wells === last.wells && s.markers === last.markers && s.activeWellId === last.activeWellId && s.hiddenTracks === last.hiddenTracks) return;
-        last = { wells: s.wells, markers: s.markers, activeWellId: s.activeWellId, hiddenTracks: s.hiddenTracks };
+        if (
+          s.wells === last.wells && s.markers === last.markers && s.activeWellId === last.activeWellId && s.hiddenTracks === last.hiddenTracks &&
+          s.faults === last.faults && s.sections === last.sections && s.checkshots === last.checkshots && s.segyLines === last.segyLines && s.seismicHorizons === last.seismicHorizons
+        ) return;
+        last = {
+          wells: s.wells, markers: s.markers, activeWellId: s.activeWellId, hiddenTracks: s.hiddenTracks,
+          faults: s.faults, sections: s.sections, checkshots: s.checkshots, segyLines: s.segyLines, seismicHorizons: s.seismicHorizons,
+        };
         clearTimeout(timer);
         timer = setTimeout(() => {
           const st = useStore.getState();
           if (!st.projectId) return;
-          persist(st.projectId, st.projectName, { wells: st.wells, markers: st.markers, activeWellId: st.activeWellId, hiddenTracks: st.hiddenTracks })
+          persist(st.projectId, st.projectName, {
+            wells: st.wells, markers: st.markers, activeWellId: st.activeWellId, hiddenTracks: st.hiddenTracks,
+            faults: st.faults, sections: st.sections, checkshots: st.checkshots, segyLines: st.segyLines, seismicHorizons: st.seismicHorizons,
+          })
             .then((list) => { setProjects(list); setSavedAt(Date.now()); })
             .catch(() => {});
         }, 500);
