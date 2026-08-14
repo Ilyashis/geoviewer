@@ -23,6 +23,20 @@ export interface FaultDef {
   trace: Pt[];
 }
 
+/**
+ * A cross-section line: a polyline drawn on the map, walked by
+ * `components/CrossSectionView` to place wells by real along-line distance
+ * and to sample the structural grid into a continuous trace. Lives here, not
+ * in the map view's own state, for the same reason faults do — the section
+ * tab is a separate mounted component and needs the line to survive leaving
+ * the map.
+ */
+export interface SectionLine {
+  id: string;
+  label: string;
+  points: Pt[];
+}
+
 export interface FrameworkSlice {
   /** Measured time–depth pairs per well — the real velocity control. */
   checkshots: WellCheckshot[];
@@ -39,6 +53,8 @@ export interface FrameworkSlice {
    */
   faults: FaultDef[];
   setFaults: (faults: FaultDef[] | ((prev: FaultDef[]) => FaultDef[])) => void;
+  sections: SectionLine[];
+  setSections: (sections: SectionLine[] | ((prev: SectionLine[]) => SectionLine[])) => void;
   seismicHorizons: Record<string, Record<string, ControlPoint[]>>;
   setSeismicHorizon: (label: string, lineId: string, controls: ControlPoint[]) => void;
   clearSeismicHorizon: (label: string, lineId: string) => void;
@@ -61,6 +77,9 @@ export const createFrameworkSlice: StateCreator<Store, [], [], FrameworkSlice> =
   faults: [],
   setFaults: (faults) =>
     set((s) => ({ faults: typeof faults === 'function' ? faults(s.faults) : faults })),
+  sections: [],
+  setSections: (sections) =>
+    set((s) => ({ sections: typeof sections === 'function' ? sections(s.sections) : sections })),
   seismicHorizons: {},
   setSeismicHorizon: (label, lineId, controls) =>
     set((s) => ({

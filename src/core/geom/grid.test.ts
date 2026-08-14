@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { idwGrid, contourLevels } from './grid';
+import { idwGrid, contourLevels, sampleGrid, type Grid } from './grid';
 import { marchingSquares } from './contours';
 
 describe('idwGrid', () => {
@@ -112,6 +112,41 @@ describe('contourLevels', () => {
   });
   it('is empty for a flat field', () => {
     expect(contourLevels(2000, 2000)).toEqual([]);
+  });
+});
+
+describe('sampleGrid', () => {
+  const flat = (nx: number, ny: number, z: number[]): Grid => ({
+    z: Float64Array.from(z), nx, ny, minX: 0, minY: 0, dx: 1, dy: 1,
+    zmin: Math.min(...z.filter(Number.isFinite)), zmax: Math.max(...z.filter(Number.isFinite)),
+  });
+
+  it('точно попадает в узел сетки', () => {
+    const g = flat(2, 2, [10, 20, 30, 40]);
+    expect(sampleGrid(g, 0, 0)).toBeCloseTo(10, 9);
+    expect(sampleGrid(g, 1, 1)).toBeCloseTo(40, 9);
+  });
+
+  it('линейно интерполирует внутри ячейки', () => {
+    const g = flat(2, 2, [0, 10, 0, 10]); // растёт только по x
+    expect(sampleGrid(g, 0.5, 0)).toBeCloseTo(5, 9);
+    expect(sampleGrid(g, 0.25, 1)).toBeCloseTo(2.5, 9);
+  });
+
+  it('вне сетки — NaN, а не экстраполяция', () => {
+    const g = flat(2, 2, [0, 10, 0, 10]);
+    expect(Number.isNaN(sampleGrid(g, -0.1, 0))).toBe(true);
+    expect(Number.isNaN(sampleGrid(g, 1.1, 0))).toBe(true);
+  });
+
+  it('пустой угол ячейки — NaN на неё целиком, без сглаживания дыры', () => {
+    // Сетка 4×4: NaN только в узле (0,0). В 3×3 центральный узел касается
+    // всех четырёх ячеек сразу — там не нашлось бы «соседней целой» ячейки.
+    const z = Array.from({ length: 16 }, (_, k) => k);
+    z[0] = NaN; // узел (0,0)
+    const g = flat(4, 4, z);
+    expect(Number.isNaN(sampleGrid(g, 0.3, 0.3))).toBe(true); // ячейка (0,0)–(1,1) касается NaN-узла
+    expect(sampleGrid(g, 2.5, 2.5)).not.toBeNaN(); // дальняя ячейка его не касается
   });
 });
 

@@ -86,6 +86,13 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const [draftFaultMarkerIds, setDraftFaultMarkerIds] = useState<string[]>([]);
   const [drawingFault, setDrawingFault] = useState(false);
   const faultDragRef = useRef<{ faultId: string; idx: number } | null>(null);
+  // Same reasoning as faults: the cross-section tab is a separately mounted
+  // view and needs the line to still be there when it looks.
+  const sections = useStore((s) => s.sections);
+  const setSections = useStore((s) => s.setSections);
+  const [draftSection, setDraftSection] = useState<Pt[]>([]);
+  const [drawingSection, setDrawingSection] = useState(false);
+  const sectionDragRef = useRef<{ sectionId: string; idx: number } | null>(null);
   const [uncOn, setUncOn] = useState(false);
   const [spread, setSpread] = useState(20);
 
@@ -490,12 +497,25 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const cancelFaultDraw = () => { setDrawingFault(false); setDraftFault([]); setDraftFaultMarkerIds([]); };
   const removeFault = (id: string) => setFaults((fs) => fs.filter((f) => f.id !== id));
 
+  // --- Section lines: same open-polyline pattern as faults, no marker gating ---
+  const startSectionDraw = () => { setDrawingSection(true); setDraftSection([]); setDrawingPinch(false); setDrawingFault(false); };
+  const finishSectionDraw = () => {
+    if (draftSection.length < 2) return;
+    const n = sections.reduce((mx, s) => Math.max(mx, Number(s.id.replace(/\D/g, '')) || 0), 0) + 1;
+    setSections((ss) => [...ss, { id: `section-${n}`, label: `Разрез ${n}`, points: draftSection }]);
+    setDrawingSection(false);
+    setDraftSection([]);
+  };
+  const cancelSectionDraw = () => { setDrawingSection(false); setDraftSection([]); };
+  const removeSection = (id: string) => setSections((ss) => ss.filter((s) => s.id !== id));
+
   const svgDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!layout) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pt = layout.fromPx(e.clientX - rect.left, e.clientY - rect.top);
     if (drawingPinch) { setPinchPts((pts) => [...pts, pt]); return; }
     if (drawingFault) { setDraftFault((pts) => [...pts, pt]); return; }
+    if (drawingSection) { setDraftSection((pts) => [...pts, pt]); return; }
   };
   const vertexDown = (i: number) => (e: ReactPointerEvent<SVGCircleElement>) => {
     e.stopPropagation();
@@ -507,9 +527,14 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     faultDragRef.current = { faultId, idx };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
+  const sectionVertexDown = (sectionId: string, idx: number) => (e: ReactPointerEvent<SVGCircleElement>) => {
+    e.stopPropagation();
+    sectionDragRef.current = { sectionId, idx };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
   const svgMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!layout) return;
-    if (pinchDragRef.current == null && faultDragRef.current == null) return;
+    if (pinchDragRef.current == null && faultDragRef.current == null && sectionDragRef.current == null) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pt = layout.fromPx(e.clientX - rect.left, e.clientY - rect.top);
     if (pinchDragRef.current != null) {
@@ -518,9 +543,12 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     } else if (faultDragRef.current != null) {
       const { faultId, idx } = faultDragRef.current;
       setFaults((fs) => fs.map((f) => (f.id === faultId ? { ...f, trace: f.trace.map((p, k) => (k === idx ? pt : p)) } : f)));
+    } else if (sectionDragRef.current != null) {
+      const { sectionId, idx } = sectionDragRef.current;
+      setSections((ss) => ss.map((s) => (s.id === sectionId ? { ...s, points: s.points.map((p, k) => (k === idx ? pt : p)) } : s)));
     }
   };
-  const svgUp = () => { pinchDragRef.current = null; faultDragRef.current = null; };
+  const svgUp = () => { pinchDragRef.current = null; faultDragRef.current = null; sectionDragRef.current = null; };
 
   if (wells.length === 0) {
     return (
@@ -565,13 +593,16 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     ? faults.map((f) => ({ id: f.id, pts: f.trace.map((p) => layout.toPx(p.x, p.y)), active: activeFaults.some((af) => af.id === f.id) }))
     : [];
   const draftFaultScreenPts = layout ? draftFault.map((p) => layout.toPx(p.x, p.y)) : [];
-
+  const sectionScreenLines = layout
+    ? sections.map((s) => ({ id: s.id, pts: s.points.map((p) => layout.toPx(p.x, p.y)) }))
+    : [];
+  const draftSectionScreenPts = layout ? draftSection.map((p) => layout.toPx(p.x, p.y)) : [];
 
   return (
     <div className="map" ref={wrapRef}>
       <canvas ref={canvasRef} className="map-canvas" style={{ width: size.w, height: size.h }} />
       <svg className="map-svg" width={size.w} height={size.h}
-        style={{ cursor: drawingPinch || drawingFault ? 'crosshair' : undefined }}
+        style={{ cursor: drawingPinch || drawingFault || drawingSection ? 'crosshair' : undefined }}
         onPointerDown={svgDown} onPointerMove={svgMove} onPointerUp={svgUp}>
         {pinchOn && pinchScreenPts.length > 0 && (
           <g className="map-pinch">
@@ -596,6 +627,17 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
         ))}
         {drawingFault && draftFaultScreenPts.length > 0 && (
           <path d={toPath(draftFaultScreenPts)} fill="none" className="map-fault-line draft" />
+        )}
+        {sectionScreenLines.map(({ id, pts }) => (
+          <g key={id} className="map-section">
+            <path d={toPath(pts)} fill="none" className="map-section-line" />
+            {pts.map((p, i) => (
+              <circle key={i} cx={p.px} cy={p.py} r={6} className="map-section-vertex" onPointerDown={sectionVertexDown(id, i)} />
+            ))}
+          </g>
+        ))}
+        {drawingSection && draftSectionScreenPts.length > 0 && (
+          <path d={toPath(draftSectionScreenPts)} fill="none" className="map-section-line draft" />
         )}
         {pts.length > 1 && (
           <path d={path} fill="none" stroke="var(--accent)" strokeWidth={2} strokeOpacity={0.75}
@@ -647,13 +689,17 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
         </div>
       )}
 
-      {mappable.length > 0 && (
+      {/* Разлому нужны пласты, чтобы было что сечь; разрезу — только координаты
+          скважин, поэтому весь блок открыт по более слабому условию. */}
+      {!schematic && coordWells.length > 0 && (
         <div className="map-fault-panel">
-          <div className="map-fault-head">
-            <span>Разломы</span>
-            <button className="map-fault-add" disabled={drawingFault} onClick={startFaultDraw}>+ разлом</button>
-          </div>
-          {drawingFault && (
+          {mappable.length > 0 && (
+            <div className="map-fault-head">
+              <span>Разломы</span>
+              <button className="map-fault-add" disabled={drawingFault} onClick={startFaultDraw}>+ разлом</button>
+            </div>
+          )}
+          {mappable.length > 0 && drawingFault && (
             <div className="map-fault-marker-pick">
               <div className="map-fault-pick-h">
                 <span>Сечёт пласты</span>
@@ -672,7 +718,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
               </div>
             </div>
           )}
-          {faults.length === 0 ? (
+          {mappable.length === 0 && faults.length === 0 ? null : faults.length === 0 ? (
             <div className="map-fault-empty">Нет разломов</div>
           ) : (
             faults.map((f) => {
@@ -695,20 +741,42 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
               );
             })
           )}
+
+          {/* Тот же плавающий блок, что и разломы: у него уже есть предел
+              высоты и своя прокрутка — второй угол под это заводить не нужно. */}
+          <div className="map-fault-head map-section-head">
+            <span>Разрезы</span>
+            <button className="map-fault-add" disabled={drawingSection} onClick={startSectionDraw}>+ разрез</button>
+          </div>
+          {sections.length === 0 ? (
+            <div className="map-fault-empty">Нет линий разреза</div>
+          ) : (
+            sections.map((s) => (
+              <div key={s.id} className="map-fault-row" title={`${s.label} · ${s.points.length} точек`}>
+                <span className="map-section-dot" />
+                <span className="map-fault-label">{s.label}</span>
+                <button className="map-fault-del" title="Удалить разрез" onClick={() => removeSection(s.id)}>×</button>
+              </div>
+            ))
+          )}
         </div>
       )}
 
       <div className={`map-north ${volResult && field ? 'aside' : ''}`}><Navigation size={16} strokeWidth={1.9} /> С</div>
 
-      {(drawingPinch || drawingFault) && (
+      {(drawingPinch || drawingFault || drawingSection) && (
         <div className="map-draw-hint">
           <span>{drawingPinch
             ? 'Кликайте по карте, чтобы поставить точки контура выклинивания'
+            : drawingSection
+            ? 'Кликайте по карте, чтобы поставить точки линии разреза'
             : 'Кликайте по карте, чтобы поставить точки трассы разлома'}</span>
-          <b>{(drawingPinch ? pinchPts.length : draftFault.length)} точ.</b>
-          <button className="map-draw-btn on" disabled={drawingPinch ? pinchPts.length < 3 : (draftFault.length < 2 || draftFaultMarkerIds.length === 0)}
-            onClick={drawingPinch ? finishPinchDraw : finishFaultDraw}>Готово</button>
-          <button className="map-draw-btn" onClick={drawingPinch ? cancelPinchDraw : cancelFaultDraw}>Отмена</button>
+          <b>{(drawingPinch ? pinchPts.length : drawingSection ? draftSection.length : draftFault.length)} точ.</b>
+          <button className="map-draw-btn on"
+            disabled={drawingPinch ? pinchPts.length < 3 : drawingSection ? draftSection.length < 2 : (draftFault.length < 2 || draftFaultMarkerIds.length === 0)}
+            onClick={drawingPinch ? finishPinchDraw : drawingSection ? finishSectionDraw : finishFaultDraw}>Готово</button>
+          <button className="map-draw-btn"
+            onClick={drawingPinch ? cancelPinchDraw : drawingSection ? cancelSectionDraw : cancelFaultDraw}>Отмена</button>
         </div>
       )}
 

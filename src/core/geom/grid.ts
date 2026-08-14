@@ -119,6 +119,30 @@ export function idwGrid(
   return { z, nx, ny, minX, minY, dx, dy, zmin, zmax };
 }
 
+/**
+ * Bilinear sample of a grid at an arbitrary (x, y) — what the cross-section
+ * tool walks along a drawn line to turn the map's structure grid into a
+ * continuous trace instead of straight segments between wells.
+ *
+ * NaN outside the mesh, and NaN when any of the four surrounding cells is
+ * blank: the same "no invented structure" rule `surfaceMesh` enforces for the
+ * 3D scene applies here too, so a gap in well control shows as a gap in the
+ * section rather than a smoothed-over guess.
+ */
+export function sampleGrid(grid: Grid, x: number, y: number): number {
+  const { z, nx, ny, minX, minY, dx, dy } = grid;
+  if (nx < 2 || ny < 2 || dx <= 0 || dy <= 0) return NaN;
+  const fx = (x - minX) / dx, fy = (y - minY) / dy;
+  if (fx < 0 || fy < 0 || fx > nx - 1 || fy > ny - 1) return NaN;
+  const i0 = Math.min(nx - 2, Math.floor(fx)), j0 = Math.min(ny - 2, Math.floor(fy));
+  const tx = fx - i0, ty = fy - j0;
+  const z00 = z[j0 * nx + i0], z10 = z[j0 * nx + i0 + 1];
+  const z01 = z[(j0 + 1) * nx + i0], z11 = z[(j0 + 1) * nx + i0 + 1];
+  if (![z00, z10, z01, z11].every(Number.isFinite)) return NaN;
+  const top = z00 + (z10 - z00) * tx, bot = z01 + (z11 - z01) * tx;
+  return top + (bot - top) * ty;
+}
+
 /** "Nice" rounded step so contour levels fall on round numbers. */
 export function niceStep(raw: number): number {
   if (raw <= 0) return 1;

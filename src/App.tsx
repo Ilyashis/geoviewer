@@ -17,6 +17,7 @@ import { WellTie } from './components/WellTie';
 import { ReservesSummary } from './components/ReservesSummary';
 import { CrossplotView } from './components/CrossplotView';
 import { SeismicView } from './components/SeismicView';
+import { CrossSectionView } from './components/CrossSectionView';
 
 import {
   bootstrap, persist, createProject, renameProject, switchProject, deleteProject,
@@ -30,7 +31,7 @@ import { buildDemoLas } from './sampleData';
  */
 const Scene3D = lazy(() => import('./components/Scene3D').then((m) => ({ default: m.Scene3D })));
 
-type TabKey = 'map' | 'correlation' | 'tie' | 'seismic' | 'scene3d' | 'crossplot' | 'reserves' | 'dashboard';
+type TabKey = 'map' | 'correlation' | 'tie' | 'seismic' | 'scene3d' | 'section' | 'crossplot' | 'reserves' | 'dashboard';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'map', label: 'Карта' },
@@ -38,6 +39,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'tie', label: 'Привязка' },
   { key: 'seismic', label: 'Сейсмика' },
   { key: 'scene3d', label: '3D' },
+  { key: 'section', label: 'Разрез' },
   { key: 'crossplot', label: 'Кроссплоты' },
   { key: 'reserves', label: 'Запасы' },
   { key: 'dashboard', label: 'Дашборд' },
@@ -272,6 +274,8 @@ export default function App() {
           <Suspense fallback={<div className="scene3d-empty">Загрузка 3D…</div>}>
             <Scene3D wells={wells} markers={markers} activeWellId={activeWellId} />
           </Suspense>
+        ) : tab === 'section' ? (
+          <CrossSectionView wells={wells} markers={markers} activeWellId={activeWellId} />
         ) : tab === 'crossplot' ? (
           <CrossplotView wells={wells} markers={markers} activeWellId={activeWellId} />
         ) : tab === 'tie' ? (
