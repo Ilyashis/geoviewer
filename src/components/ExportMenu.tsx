@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { Download, Milestone, Layers, Image as ImageIcon, FileText, Route, GitBranch, Spline, Activity } from 'lucide-react';
+import { Download, Milestone, Layers, Image as ImageIcon, FileText, Route, GitBranch, Spline, Activity, Radio, Mountain } from 'lucide-react';
 import { useStore } from '../store';
 import { buildTopsCsv } from '../export/tops';
 import { buildLithologyCsv } from '../export/lithology';
@@ -7,6 +7,8 @@ import { buildDevFile } from '../export/dev';
 import { buildFaultsCsv } from '../export/faults';
 import { buildSectionsCsv } from '../export/sections';
 import { buildCheckshotsCsv } from '../export/checkshots';
+import { buildSegyLinesCsv } from '../export/segyLines';
+import { buildSeismicHorizonsCsv } from '../export/seismicHorizons';
 import { exportCorrelationPng, exportCorrelationJpeg } from '../export/image';
 import { jpegToPdf } from '../export/pdf';
 import { downloadText, triggerDownload } from '../export/download';
@@ -27,6 +29,8 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
   const faults = useStore((s) => s.faults);
   const sections = useStore((s) => s.sections);
   const checkshots = useStore((s) => s.checkshots);
+  const segyLines = useStore((s) => s.segyLines);
+  const seismicHorizons = useStore((s) => s.seismicHorizons);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -63,6 +67,17 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
 
   const exportCheckshotsCsv = () => {
     downloadText(`checkshots-${stamp()}.csv`, buildCheckshotsCsv(checkshots));
+    setOpen(false);
+  };
+
+  const exportSegyLinesCsv = () => {
+    downloadText(`segy-lines-${stamp()}.csv`, buildSegyLinesCsv(segyLines));
+    setOpen(false);
+  };
+
+  const hasSeismicHorizons = Object.keys(seismicHorizons).length > 0;
+  const exportSeismicHorizonsCsv = () => {
+    downloadText(`seismic-horizons-${stamp()}.csv`, buildSeismicHorizonsCsv(seismicHorizons));
     setOpen(false);
   };
 
@@ -112,6 +127,13 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
           </button>
           <button className="menu-item" onClick={exportCheckshotsCsv} disabled={checkshots.length === 0}>
             <Activity size={15} strokeWidth={1.75} /> Чекшоты (CSV)
+          </button>
+          <button className="menu-item" onClick={exportSegyLinesCsv} disabled={segyLines.length === 0}
+            title="Координаты трасс — привязанные, если у линии есть привязка">
+            <Radio size={15} strokeWidth={1.75} /> SEG-Y линии (CSV)
+          </button>
+          <button className="menu-item" onClick={exportSeismicHorizonsCsv} disabled={!hasSeismicHorizons}>
+            <Mountain size={15} strokeWidth={1.75} /> Сейсмогоризонты (CSV)
           </button>
           <button className="menu-item" onClick={exportDev} disabled={coordWells.length === 0} title="Petrel-совместимый .dev на каждую скважину с координатами">
             <Route size={15} strokeWidth={1.75} /> Траектории (.dev)
