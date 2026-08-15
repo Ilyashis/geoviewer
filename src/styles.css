@@ -79,8 +79,15 @@ body {
 .btn.sm { padding: 6px 12px; }
 
 .menu-wrap { position: relative; display: inline-flex; }
+/* Portalled to <body> (ExportMenu, ProjectMenu) — position comes from an
+   inline style computed from the trigger button's rect, not this class.
+   .topbar has overflow-x: auto for narrow viewports, which forces
+   overflow-y to auto too (a browser can't clip one axis and show the other
+   overflowing — an unset axis next to a non-visible one becomes auto), so a
+   non-portalled dropdown here would be silently clipped to the bar's own
+   height at any viewport width, not just narrow ones. */
 .menu {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 15;
+  position: fixed; z-index: 15;
   min-width: 190px;
   background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--r-md);
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
@@ -108,7 +115,7 @@ body {
 .doc:hover { background: var(--panel-2); color: var(--text); }
 .doc-name { color: var(--text); font-weight: 600; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.proj-menu { left: 0; right: auto; min-width: 240px; }
+.proj-menu { min-width: 240px; }
 .proj-head {
   font-size: 11px; font-family: var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-3); padding: 6px 10px 8px;

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { Download, Milestone, Layers, Image as ImageIcon, FileText, Route, GitBranch, Spline, Activity, Radio, Mountain } from 'lucide-react';
 import { useStore } from '../store';
 import { buildTopsCsv } from '../export/tops';
@@ -32,15 +33,33 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
   const segyLines = useStore((s) => s.segyLines);
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  // Portalled to <body> — see the .menu CSS comment for why: .topbar's
+  // horizontal-scroll overflow silently clips a non-portalled dropdown here.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const measure = () => setRect(btnRef.current?.getBoundingClientRect() ?? null);
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, true);
+    return () => {
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure, true);
+    };
   }, [open]);
 
   const exportCsv = () => {
@@ -106,13 +125,18 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
     setOpen(false);
   };
 
+  const menuStyle = rect ? {
+    top: rect.bottom + 6,
+    left: Math.max(8, Math.min(rect.right - 190, window.innerWidth - 198)),
+  } : undefined;
+
   return (
-    <div className="menu-wrap" ref={ref}>
-      <button className="iconbtn" title="Экспорт" onClick={() => setOpen((o) => !o)} disabled={wells.length === 0}>
+    <div className="menu-wrap">
+      <button ref={btnRef} className="iconbtn" title="Экспорт" onClick={() => setOpen((o) => !o)} disabled={wells.length === 0}>
         <Download size={16} strokeWidth={1.75} />
       </button>
-      {open && (
-        <div className="menu">
+      {open && rect && createPortal(
+        <div className="menu" ref={popRef} style={menuStyle}>
           <button className="menu-item" onClick={exportCsv} disabled={markers.length === 0}>
             <Milestone size={15} strokeWidth={1.75} /> Разбивки (CSV)
           </button>
@@ -144,7 +168,8 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
           <button className="menu-item" onClick={exportPdf}>
             <FileText size={15} strokeWidth={1.75} /> Планшет (PDF)
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
