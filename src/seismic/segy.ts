@@ -15,6 +15,7 @@
  */
 
 import type { SeismicSection } from './section';
+import type { TiePoint } from '../core/geom/similarity';
 
 /** Sample format codes from the binary header (byte 3225). */
 export type SegyFormat = 1 | 2 | 3 | 5 | 8;
@@ -218,6 +219,13 @@ export interface SegyLine {
   /** Full textual header, kept so the user can inspect provenance. */
   text: string;
   traceCount: number;
+  /**
+   * Manual georeferencing (`core/geom/similarity.ts`) — two points the
+   * interpreter has independently confirmed the real position of. Nothing in
+   * the file can substitute for this when the header has no CRS at all; it's
+   * a standing gap this line's `coords` carry, not something to guess at.
+   */
+  tie?: [TiePoint, TiePoint];
 }
 
 /**

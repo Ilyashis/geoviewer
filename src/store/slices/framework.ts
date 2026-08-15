@@ -3,6 +3,7 @@ import type { ControlPoint } from '../../core/framework';
 import type { WellCheckshot } from '../../wells/checkshot';
 import type { SegyLine } from '../../seismic/segy';
 import type { Pt } from '../../core/geom/polygon';
+import type { TiePoint } from '../../core/geom/similarity';
 import type { Store } from '../types';
 
 /**
@@ -55,6 +56,7 @@ export interface FrameworkSlice {
   segyLines: SegyLine[];
   addSegyLine: (line: SegyLine) => void;
   removeSegyLine: (id: string) => void;
+  setSegyLineTie: (id: string, tie: [TiePoint, TiePoint] | undefined) => void;
   /**
    * Faults, held here rather than inside the map view: the views are mounted
    * one at a time, so state living in the map was silently discarded the
@@ -84,6 +86,8 @@ export const createFrameworkSlice: StateCreator<Store, [], [], FrameworkSlice> =
   addSegyLine: (line) =>
     set((s) => ({ segyLines: [...s.segyLines.filter((l) => l.id !== line.id), line] })),
   removeSegyLine: (id) => set((s) => ({ segyLines: s.segyLines.filter((l) => l.id !== id) })),
+  setSegyLineTie: (id, tie) =>
+    set((s) => ({ segyLines: s.segyLines.map((l) => (l.id === id ? { ...l, tie } : l)) })),
   faults: [],
   setFaults: (faults) =>
     set((s) => ({ faults: typeof faults === 'function' ? faults(s.faults) : faults })),
