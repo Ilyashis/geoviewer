@@ -23,8 +23,19 @@ interface Props {
  * size, so this is chosen for fidelity rather than for a frame budget.
  */
 const MESH = 120;
-/** Default exaggeration: relief is tens of metres over kilometres of field. */
-const DEFAULT_V = 12;
+/**
+ * Default exaggeration. `framing`'s bounds run from the wellhead down to the
+ * deepest pick — the well's real depth, easily ~2 km, not just the tens of
+ * metres of cross-field relief a single horizon varies by — so the Z span
+ * this multiplies is usually already comparable to the field's horizontal
+ * spread even before exaggerating it. A high default (this used to be 12)
+ * pushes spanZ far past spanX/Y, and the auto-frame — correctly sizing the
+ * camera to fit a box shaped like that — collapses the wells to a sliver by
+ * default on perfectly ordinary data. A gentle default keeps the initial
+ * view legible; the slider (1–60) is still there for whoever wants relief
+ * pushed harder, as a deliberate choice rather than the view they land on.
+ */
+const DEFAULT_V = 3;
 
 /**
  * 3D view of the structural model: mapped surfaces, well paths and fault

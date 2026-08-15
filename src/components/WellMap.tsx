@@ -247,15 +247,26 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
    * blank, so a stray well — a leftover demo point, or two fields dropped in
    * together — stretches the mesh over mostly nothing and the map looks broken.
    * Naming the split turns that into a diagnosis.
+   *
+   * Deliberately clusters `coordWells`, not `field.points`: the latter also
+   * carries a seismic horizon's control points once one's been sent to the
+   * map (`seismicControls`, folded into `field` below), and those arrive as
+   * hundreds of points densely spaced along the line. Mixed into the same
+   * "typical spacing" statistic this warning is built on, that dense cluster
+   * makes a perfectly normal well layout register as scattered — and the
+   * message says "Скважины" (wells), which stops being true the moment
+   * non-well points are part of what got clustered. A field-wide, mode- and
+   * surface-independent well set keeps the label honest and the warning from
+   * flickering with whatever surface happens to be selected.
    */
   const scatterNote = useMemo(() => {
-    const pts = field?.points ?? [];
+    const pts: ControlPoint[] = coordWells.map((w) => ({ x: w.x!, y: w.y!, z: 0 }));
     if (pts.length < 3) return null;
     const cl = clusterPoints(pts);
     if (cl.length < 2) return null;
     const gapKm = Math.min(...cl.slice(1).map((c) => clusterGap(cl[0], c))) / 1000;
     return { groups: cl.length, main: cl[0].members.length, apart: pts.length - cl[0].members.length, gapKm };
-  }, [field]);
+  }, [coordWells]);
 
   // Top-surface structure (TVDSS) on the same mesh — depths for the OWC clip.
   const topGrid = useMemo(() => {
