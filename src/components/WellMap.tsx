@@ -12,6 +12,7 @@ import type { FaultDef } from '../store/slices/framework';
 import { computeTrajectory, positionAtMd, type TrajPoint } from '../wells/deviation';
 import { metricWells } from '../wells/coords';
 import { tvdssAt as tvdssAtOf, posAt as posAtOf, structuralControlPoints } from '../wells/structure';
+import { useConfirm } from '../hooks/useConfirm';
 import { marchingSquares } from '../core/geom/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../reserves/volumetrics';
 import { aggregateZone, DEFAULT_PETRO, type PetroParams } from '../wells/petrophysics';
@@ -77,6 +78,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const [owc, setOwc] = useState(0);
   const [pinchOn, setPinchOn] = useState(false);
   const [pinchPts, setPinchPts] = useState<Pt[]>([]);
+  const { confirm, dialog } = useConfirm();
   const [drawingPinch, setDrawingPinch] = useState(false);
   const pinchDragRef = useRef<number | null>(null);
   // Разломы живут в сторе: вкладки монтируются по одной, и локальное состояние
@@ -747,7 +749,11 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
                       setFaultDip(f.id, Number.isFinite(v as number) ? v : undefined);
                     }}
                   />
-                  <button className="map-fault-del" title="Удалить разлом" onClick={() => removeFault(f.id)}>×</button>
+                  <button className="map-fault-del" title="Удалить разлом" onClick={() => confirm({
+                    title: `Удалить «${f.label}»?`,
+                    message: 'Трасса, угол падения и привязка к пластам этого разлома будут удалены без возможности восстановления.',
+                    onConfirm: () => removeFault(f.id),
+                  })}>×</button>
                 </div>
               );
             })
@@ -766,7 +772,11 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
               <div key={s.id} className="map-fault-row" title={`${s.label} · ${s.points.length} точек`}>
                 <span className="map-section-dot" />
                 <span className="map-fault-label">{s.label}</span>
-                <button className="map-fault-del" title="Удалить разрез" onClick={() => removeSection(s.id)}>×</button>
+                <button className="map-fault-del" title="Удалить разрез" onClick={() => confirm({
+                  title: `Удалить «${s.label}»?`,
+                  message: 'Линия разреза будет удалена без возможности восстановления.',
+                  onConfirm: () => removeSection(s.id),
+                })}>×</button>
               </div>
             ))
           )}
@@ -957,6 +967,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       {!schematic && mode === 'isochore' && mappable.length >= 2 && !field && (
         <div className="map-badge">Мало общих пикировок для изохоры — выберите два пласта с ≥3 общими скважинами</div>
       )}
+      {dialog}
     </div>
   );
 }

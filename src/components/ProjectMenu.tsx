@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FolderOpen, ChevronDown, Plus, Pencil, Trash2, Check } from 'lucide-react';
 import type { ProjectMeta } from '../persistence';
+import { useConfirm } from '../hooks/useConfirm';
 
 interface Props {
   name: string;
@@ -17,6 +18,7 @@ export function ProjectMenu({ name, projects, currentId, onSwitch, onCreate, onR
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const { confirm, dialog } = useConfirm();
 
   useEffect(() => {
     if (!open) return;
@@ -71,7 +73,14 @@ export function ProjectMenu({ name, projects, currentId, onSwitch, onCreate, onR
                   <button
                     className="proj-ic danger"
                     title="Удалить проект"
-                    onClick={() => onDelete(p.id)}
+                    onClick={() => {
+                      setOpen(false);
+                      confirm({
+                        title: `Удалить проект «${p.name}»?`,
+                        message: 'Все скважины, разбивки и остальные данные этого проекта будут удалены без возможности восстановления.',
+                        onConfirm: () => onDelete(p.id),
+                      });
+                    }}
                   >
                     <Trash2 size={13} strokeWidth={1.75} />
                   </button>
@@ -84,6 +93,7 @@ export function ProjectMenu({ name, projects, currentId, onSwitch, onCreate, onR
           </button>
         </div>
       )}
+      {dialog}
     </div>
   );
 }

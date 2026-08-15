@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Trash2, Plus } from 'lucide-react';
 import type { Marker, Well } from '../types';
+import { useConfirm } from '../hooks/useConfirm';
 
 interface Props {
   wells: Well[];
@@ -25,6 +26,7 @@ export function WellTie({
     }
     return Number.isFinite(mn) ? Math.round((mn + mx) / 2) : 2000;
   }, [wells]);
+  const { confirm, dialog } = useConfirm();
   // The tie table has no per-well click to anchor a real pick on, so the
   // active well stands in as the origin — every other well is then seeded
   // from its nearest neighbour (see addMarkerAtDepth) instead of copying
@@ -84,7 +86,11 @@ export function WellTie({
                       <span className="tie-dot" style={{ background: m.color }} />
                       <input className="tie-name" value={m.label}
                         onChange={(e) => renameMarker(m.id, e.target.value)} aria-label="Имя разбивки" />
-                      <button className="tie-del" title="Удалить разбивку" onClick={() => removeMarker(m.id)}>
+                      <button className="tie-del" title="Удалить разбивку" onClick={() => confirm({
+                        title: `Удалить разбивку «${m.label}»?`,
+                        message: 'Пикировки по всем скважинам для этой разбивки будут удалены без возможности восстановления.',
+                        onConfirm: () => removeMarker(m.id),
+                      })}>
                         <Trash2 size={13} strokeWidth={1.75} />
                       </button>
                     </td>
@@ -125,6 +131,7 @@ export function WellTie({
           </table>
         </div>
       )}
+      {dialog}
     </div>
   );
 }

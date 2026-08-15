@@ -19,6 +19,7 @@ import { CrossplotView } from './components/CrossplotView';
 import { SeismicView } from './components/SeismicView';
 import { CrossSectionView } from './components/CrossSectionView';
 import { DataPanel } from './components/DataPanel';
+import { useConfirm } from './hooks/useConfirm';
 
 import {
   bootstrap, persist, createProject, renameProject, switchProject, deleteProject,
@@ -92,6 +93,7 @@ export default function App() {
   const [cursorDepth, setCursorDepth] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [dataPanelOpen, setDataPanelOpen] = useState(false);
+  const { confirm: confirmDestroy, dialog: destroyDialog } = useConfirm();
   const [focusedWellId, setFocusedWellId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -168,7 +170,16 @@ export default function App() {
       if (tag === 'input' || tag === 'textarea') return;
 
       if (e.key === 'Escape') { st.selectMarker(null); e.preventDefault(); return; }
-      if (e.key === 'Delete' || e.key === 'Backspace') { st.removeMarker(id); e.preventDefault(); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        const marker = st.markers.find((m) => m.id === id);
+        confirmDestroy({
+          title: `Удалить разбивку «${marker?.label ?? ''}»?`,
+          message: 'Пикировки по всем скважинам для этой разбивки будут удалены без возможности восстановления.',
+          onConfirm: () => st.removeMarker(id),
+        });
+        return;
+      }
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         const wellId = st.activeWellId;
         const marker = st.markers.find((m) => m.id === id);
@@ -181,7 +192,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [confirmDestroy]);
 
   // --- Project management ---
   const onSwitchProject = async (id: string) => {
@@ -260,7 +271,11 @@ export default function App() {
             Демо
           </button>
           {wells.length > 0 && (
-            <button className="btn ghost sm" title="Очистить проект" onClick={() => clearAll()}>
+            <button className="btn ghost sm" title="Очистить проект" onClick={() => confirmDestroy({
+              title: 'Очистить проект?',
+              message: `Все скважины, разбивки, разломы, разрезы и импортированные данные проекта «${projectName}» будут удалены без возможности восстановления.`,
+              onConfirm: () => clearAll(),
+            })}>
               Очистить
             </button>
           )}
@@ -341,7 +356,11 @@ export default function App() {
                   well={w}
                   active={w.id === activeWellId}
                   onActivate={() => setActiveWell(w.id)}
-                  onRemove={() => removeWell(w.id)}
+                  onRemove={() => confirmDestroy({
+                    title: `Удалить скважину ${w.name}?`,
+                    message: 'Каротаж, литология и все пикировки по этой скважине будут удалены без возможности восстановления.',
+                    onConfirm: () => removeWell(w.id),
+                  })}
                   tool={tool}
                   onCreateMarker={(depth) => addMarkerAtDepth(w.id, depth)}
                   focused={w.id === focusedWellId}
@@ -361,7 +380,11 @@ export default function App() {
                 wells={wells}
                 onRename={(label) => renameMarker(selectedMarker.id, label)}
                 onDepth={(wellId, depth) => updateMarkerDepth(selectedMarker.id, wellId, depth)}
-                onRemove={() => removeMarker(selectedMarker.id)}
+                onRemove={() => confirmDestroy({
+                  title: `Удалить разбивку «${selectedMarker.label}»?`,
+                  message: 'Пикировки по всем скважинам для этой разбивки будут удалены без возможности восстановления.',
+                  onConfirm: () => removeMarker(selectedMarker.id),
+                })}
                 onClose={() => selectMarker(null)}
               />
             )}
@@ -427,6 +450,8 @@ export default function App() {
           setDataPanelOpen(false);
         }}
       />
+
+      {destroyDialog}
     </div>
   );
 }

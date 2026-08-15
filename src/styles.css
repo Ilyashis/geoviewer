@@ -171,6 +171,8 @@ body {
 .btn:hover { filter: brightness(1.08); }
 .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); font-weight: 500; }
 .btn.ghost:hover { background: var(--panel-2); }
+.btn.danger { background: var(--danger); color: #fff; }
+.confirm-modal { width: min(380px, 100%); }
 .avatar {
   width: 30px; height: 30px; border-radius: 50%;
   background: var(--raised); border: 1px solid var(--border);
