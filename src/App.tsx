@@ -56,6 +56,18 @@ const TOOLS = [
   { key: 'table', label: 'Таблица', Icon: TableIcon },
 ] as const;
 
+// Correlation has its own dynamic, tool-dependent hint below — everything
+// else gets one static line describing its actual (verified) interaction.
+// Tabs with no canvas/pointer interaction of their own (section, crossplot,
+// reserves, dashboard), or that already show their own in-canvas hint
+// (scene3d has .scene3d-hint), are left out rather than given a duplicate
+// or made-up hint.
+const TAB_HINTS: Partial<Record<TabKey, string>> = {
+  map: 'Клик по скважине — сделать активной',
+  tie: 'Клик по ячейке — ввести или изменить глубину пикировки',
+  seismic: 'Клик по линии — пикировка горизонта · перетаскивание точки — правка',
+};
+
 export default function App() {
   const wells = useStore((s) => s.wells);
   const markers = useStore((s) => s.markers);
@@ -420,16 +432,26 @@ export default function App() {
       </div>
 
       <footer className="statusbar">
-        {tool === 'marker' ? (
-          <span>Клик по планшету — поставить top · тяни ручку — сдвинуть глубину (снап к пластам)</span>
-        ) : cursorDepth != null ? (
-          <span className="depth">Глубина: {cursorDepth.toFixed(2)}</span>
-        ) : (
-          <span>Колесо — зум по глубине · перетаскивание — панорама</span>
-        )}
+        {tab === 'correlation' ? (
+          tool === 'marker' ? (
+            <span>Клик по планшету — поставить top · тяни ручку — сдвинуть глубину (снап к пластам)</span>
+          ) : cursorDepth != null ? (
+            <span className="depth">Глубина: {cursorDepth.toFixed(2)}</span>
+          ) : (
+            <span>Колесо — зум по глубине · перетаскивание — панорама</span>
+          )
+        ) : TAB_HINTS[tab] ? (
+          <span>{TAB_HINTS[tab]}</span>
+        ) : null}
         <span style={{ flex: 1 }} />
         {savedLabel && <span className="saved">{savedLabel}</span>}
-        <span>{wells.length} скв. · {markers.length} марк. · {TOOLS.find((t) => t.key === tool)?.label}</span>
+        {tab === 'correlation' ? (
+          <span>{wells.length} скв. · {markers.length} марк. · {TOOLS.find((t) => t.key === tool)?.label}</span>
+        ) : tab === 'tie' ? (
+          <span>{wells.length} скв. · {markers.length} марк.</span>
+        ) : (
+          <span>{wells.length} скв.</span>
+        )}
       </footer>
 
       {showImport && <ImportModal onClose={() => setShowImport(false)} />}
