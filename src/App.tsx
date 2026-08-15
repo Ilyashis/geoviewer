@@ -12,12 +12,12 @@ import { ImportModal } from './components/ImportModal';
 import { ExportMenu } from './components/ExportMenu';
 import { ProjectMenu } from './components/ProjectMenu';
 import { Dashboard } from './components/Dashboard';
-import { WellMap } from './components/WellMap';
+import { WellMap, type WellMapHandle } from './components/WellMap';
 import { WellTie } from './components/WellTie';
 import { ReservesSummary } from './components/ReservesSummary';
-import { CrossplotView } from './components/CrossplotView';
+import { CrossplotView, type CrossplotHandle } from './components/CrossplotView';
 import { SeismicView } from './components/SeismicView';
-import { CrossSectionView } from './components/CrossSectionView';
+import { CrossSectionView, type CrossSectionHandle } from './components/CrossSectionView';
 import { DataPanel } from './components/DataPanel';
 import { useConfirm } from './hooks/useConfirm';
 
@@ -67,6 +67,7 @@ const TAB_HINTS: Partial<Record<TabKey, string>> = {
   tie: 'Клик по ячейке — ввести или изменить глубину пикировки',
   seismic: 'Клик по линии — пикировка горизонта · перетаскивание точки — правка',
   section: 'Колесо — зум · перетаскивание — панорама',
+  crossplot: 'Колесо — зум · перетаскивание — панорама (только для кроссплота, не гистограммы)',
 };
 
 export default function App() {
@@ -111,6 +112,12 @@ export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<WellMapHandle>(null);
+  const sectionRef = useRef<CrossSectionHandle>(null);
+  const crossplotRef = useRef<CrossplotHandle>(null);
+  const [mapZoomPct, setMapZoomPct] = useState<number | null>(null);
+  const [sectionZoomPct, setSectionZoomPct] = useState<number | null>(null);
+  const [crossplotZoomPct, setCrossplotZoomPct] = useState<number | null>(null);
 
   useEffect(() => {
     if (wells.length === 0) { setDepthWindow(null); return; }
@@ -311,7 +318,7 @@ export default function App() {
         {tab === 'dashboard' ? (
           <Dashboard projectName={projectName} wells={wells} markers={markers} />
         ) : tab === 'map' ? (
-          <WellMap wells={wells} markers={markers} activeWellId={activeWellId} onActivate={setActiveWell} />
+          <WellMap ref={mapRef} wells={wells} markers={markers} activeWellId={activeWellId} onActivate={setActiveWell} onZoomChange={setMapZoomPct} />
         ) : tab === 'reserves' ? (
           <ReservesSummary wells={wells} markers={markers} />
         ) : tab === 'seismic' ? (
@@ -321,9 +328,9 @@ export default function App() {
             <Scene3D wells={wells} markers={markers} activeWellId={activeWellId} />
           </Suspense>
         ) : tab === 'section' ? (
-          <CrossSectionView wells={wells} markers={markers} activeWellId={activeWellId} />
+          <CrossSectionView ref={sectionRef} wells={wells} markers={markers} activeWellId={activeWellId} onZoomChange={setSectionZoomPct} />
         ) : tab === 'crossplot' ? (
-          <CrossplotView wells={wells} markers={markers} activeWellId={activeWellId} />
+          <CrossplotView ref={crossplotRef} wells={wells} markers={markers} activeWellId={activeWellId} onZoomChange={setCrossplotZoomPct} />
         ) : tab === 'tie' ? (
           <WellTie
             wells={wells}
@@ -384,6 +391,7 @@ export default function App() {
                   onDepthWindowChange={setDepthWindow}
                   cursorDepth={cursorDepth}
                   onCursorDepth={setCursorDepth}
+                  scrollRef={scrollRef}
                 />
               ))}
             </div>
@@ -445,6 +453,19 @@ export default function App() {
           <span>{TAB_HINTS[tab]}</span>
         ) : null}
         <span style={{ flex: 1 }} />
+        {(() => {
+          const zoom = tab === 'map' ? { pct: mapZoomPct, reset: () => mapRef.current?.resetView() }
+            : tab === 'section' ? { pct: sectionZoomPct, reset: () => sectionRef.current?.resetView() }
+            : tab === 'crossplot' ? { pct: crossplotZoomPct, reset: () => crossplotRef.current?.resetView() }
+            : null;
+          if (!zoom || zoom.pct == null) return null;
+          return (
+            <span className="zoom">
+              Зум {zoom.pct}%
+              <button className="zoom-reset" onClick={zoom.reset}>сбросить</button>
+            </span>
+          );
+        })()}
         {savedLabel && <span className="saved">{savedLabel}</span>}
         {tab === 'correlation' ? (
           <span>{wells.length} скв. · {markers.length} марк. · {TOOLS.find((t) => t.key === tool)?.label}</span>

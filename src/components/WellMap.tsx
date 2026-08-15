@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Navigation, Download } from 'lucide-react';
 import type { Marker, Well } from '../types';
 import { contourLevels } from '../core/geom/grid';
@@ -28,6 +28,12 @@ interface Props {
   markers: Marker[];
   activeWellId: string | null;
   onActivate: (id: string) => void;
+  /** Current zoom, as a percentage (null = default/fit) — for the app footer. */
+  onZoomChange?: (pct: number | null) => void;
+}
+
+export interface WellMapHandle {
+  resetView: () => void;
 }
 
 const PAD = 64;
@@ -63,7 +69,9 @@ interface Field {
 }
 
 /** Plan-view map: wells, profile, and a gridded surface (structure or isochore). */
-export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
+export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
+  { wells, markers, activeWellId, onActivate, onZoomChange }, ref,
+) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -599,6 +607,10 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     if (drawingSection) { setDraftSection((pts) => [...pts, pt]); return; }
   };
   const resetView = () => setPan({ x: 0, y: 0, k: 1 });
+  useImperativeHandle(ref, () => ({ resetView }), []);
+  useEffect(() => {
+    onZoomChange?.(pan.k !== 1 || pan.x !== 0 || pan.y !== 0 ? Math.round(pan.k * 100) : null);
+  }, [pan, onZoomChange]);
 
   // React's onWheel is registered passive at the root, so preventDefault()
   // inside a synthetic handler throws — a plain DOM listener is required to
@@ -859,13 +871,6 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
 
       <div className={`map-north ${volResult && field ? 'aside' : ''}`}><Navigation size={16} strokeWidth={1.9} /> С</div>
 
-      {pan.k !== 1 || pan.x !== 0 || pan.y !== 0 ? (
-        <div className="map-zoom">
-          <span>{Math.round(pan.k * 100)}%</span>
-          <button className="map-export-btn" onClick={resetView}>Сбросить вид</button>
-        </div>
-      ) : null}
-
       {(drawingPinch || drawingFault || drawingSection) && (
         <div className="map-draw-hint">
           <span>{drawingPinch
@@ -1051,7 +1056,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       {dialog}
     </div>
   );
-}
+});
 
 function fmtM(x: number, unit: string): string {
   const a = Math.abs(x);

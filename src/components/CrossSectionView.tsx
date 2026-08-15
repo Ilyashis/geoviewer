@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Marker, Well } from '../types';
 import { dataRadius, niceStep, sampleGrid, type ControlPoint } from '../core/geom/grid';
 import { polylineCrossings, projectOntoPolyline, sampleAlongPolyline } from '../core/geom/line';
@@ -14,6 +14,12 @@ interface Props {
   wells: Well[];
   markers: Marker[];
   activeWellId: string | null;
+  /** Current zoom, as a percentage (null = default/fit) — for the app footer. */
+  onZoomChange?: (pct: number | null) => void;
+}
+
+export interface CrossSectionHandle {
+  resetView: () => void;
 }
 
 const MESH_N = 130;
@@ -39,7 +45,9 @@ const MIN_ZOOM_FRAC = 0.03;
  * well control shows as a real gap in the trace, exactly like the map leaves
  * a cell blank rather than inventing structure over it (`core/geom/grid`).
  */
-export function CrossSectionView({ wells, markers, activeWellId }: Props) {
+export const CrossSectionView = forwardRef<CrossSectionHandle, Props>(function CrossSectionView(
+  { wells, markers, activeWellId, onZoomChange }, ref,
+) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 800, h: 500 });
@@ -373,6 +381,9 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
   const onPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current;
     if (!drag || !autoZRange) return;
+    // Already showing the full extent — a pan has nowhere to go, so don't
+    // manufacture a "zoomed" view (and footer chip) that's identical to auto.
+    if (drag.start.arcMax - drag.start.arcMin >= lineLength && drag.start.zMax - drag.start.zMin >= autoZRange.zMax - autoZRange.zMin) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pw = Math.max(10, rect.width - L - R), ph = Math.max(10, rect.height - T - B);
     const dxArc = -((e.clientX - drag.startX) / pw) * (drag.start.arcMax - drag.start.arcMin);
@@ -383,6 +394,12 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
   };
   const onPointerUp = () => { dragRef.current = null; };
   const resetView = () => setView(null);
+  useImperativeHandle(ref, () => ({ resetView }), []);
+  // The arc (along-line) span is the more legible single number for a
+  // profile view — the depth span usually tracks it closely anyway.
+  useEffect(() => {
+    onZoomChange?.(view ? Math.round((lineLength / (view.arcMax - view.arcMin)) * 100) : null);
+  }, [view, lineLength, onZoomChange]);
 
   // Native, non-passive listener — React's onWheel is registered passive at
   // the root, so preventDefault() inside the synthetic handler is a no-op
@@ -428,12 +445,6 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
       <canvas ref={canvasRef} className="section-canvas" style={{ width: size.w, height: size.h, cursor: 'grab' }}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp} />
 
-      {view && (
-        <div className="map-zoom">
-          <button className="map-export-btn" onClick={resetView}>Сбросить вид</button>
-        </div>
-      )}
-
       <div className="section-panel">
         <SurfacePicker
           label="Линия"
@@ -460,4 +471,4 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
       </div>
     </div>
   );
-}
+});

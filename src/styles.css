@@ -458,6 +458,12 @@ body {
 .statusbar .depth { color: var(--text-2); font-variant-numeric: tabular-nums; }
 .statusbar .saved { color: var(--success); }
 .statusbar .saved::before { content: '● '; }
+.statusbar .zoom { display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); }
+.statusbar .zoom-reset {
+  background: none; border: 0; padding: 0; color: var(--accent, #4dabf7); font: inherit;
+  cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+.statusbar .zoom-reset:hover { color: var(--text); }
 
 .muted { color: var(--text-2); }
 
@@ -803,12 +809,6 @@ body {
    вместе, если ширина изменится. */
 .map-north.aside { right: calc(var(--vol-w) + 30px); }
 .map-north svg { color: var(--accent); }
-.map-zoom {
-  position: absolute; right: 18px; bottom: 16px; display: flex; align-items: center; gap: 8px;
-  background: rgba(27, 33, 39, 0.85); backdrop-filter: blur(10px);
-  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 6px 8px;
-  font: 600 12px var(--mono); color: var(--text-2);
-}
 .map-legend { position: absolute; left: 18px; bottom: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
   color: var(--text-3); font-size: 12px; background: var(--panel); border: 1px solid var(--border);
   padding: 8px 12px; border-radius: var(--r-sm); max-width: min(280px, calc(100% - 36px)); }
