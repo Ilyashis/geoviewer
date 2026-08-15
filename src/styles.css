@@ -807,8 +807,14 @@ body {
 .vol-note { margin-top: 8px; font-size: 10px; color: var(--text-3); line-height: 1.4; }
 .map-well { cursor: pointer; }
 .map-well:hover circle { filter: brightness(1.15); }
-.map-label { fill: var(--text-2); font: 12px var(--mono); pointer-events: none; }
-.map-label.on { fill: var(--text); font-weight: 600; }
+/* White halo (paint-order draws the stroke first, fill on top) so the name
+   stays legible over any colour the structure/isochore heatmap puts behind
+   it — a flat --text-2 fill used to disappear into busy map fills. */
+.map-label {
+  fill: var(--accent); font: 12px var(--mono); pointer-events: none;
+  paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round;
+}
+.map-label.on { fill: var(--accent); font-weight: 700; stroke-width: 3.5px; }
 .map-north { position: absolute; top: 16px; right: 18px; display: flex; align-items: center; gap: 6px;
   color: var(--text-2); font: 600 12px var(--mono); background: var(--panel); border: 1px solid var(--border);
   padding: 6px 10px; border-radius: var(--r-sm); transition: right 0.15s; }
