@@ -36,6 +36,11 @@
 
 html, body, #root { height: 100%; margin: 0; }
 
+/* Stop trackpad/touch swipe-back (and pull-to-refresh) from firing when a
+   horizontally-scrolling area (well row, tab bar) rubber-bands at its edge —
+   in a single-page app there's no "page" to go back to, just data loss. */
+html, body { overscroll-behavior: none; }
+
 body {
   background: var(--canvas);
   color: var(--text);
@@ -55,6 +60,7 @@ body {
   border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
   overflow-x: auto; /* narrow viewports: scroll instead of clipping controls */
+  overscroll-behavior-x: contain;
   scrollbar-width: thin;
 }
 /* Children keep their size; the tabs' auto-margins center on wide screens and
@@ -379,6 +385,7 @@ body {
   flex: 1; min-height: 0;
   display: flex; gap: 12px; padding: 12px;
   overflow-x: auto; align-items: stretch;
+  overscroll-behavior-x: contain;
 }
 
 .plate {
