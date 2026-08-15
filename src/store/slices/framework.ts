@@ -70,6 +70,14 @@ export interface FrameworkSlice {
   seismicHorizons: Record<string, Record<string, ControlPoint[]>>;
   setSeismicHorizon: (label: string, lineId: string, controls: ControlPoint[]) => void;
   clearSeismicHorizon: (label: string, lineId: string) => void;
+  /**
+   * "Show this" from the data panel — a tab switch alone isn't enough when
+   * the target lives behind that view's own local selection state (which
+   * seismic line, which section line). The target view watches this, applies
+   * the selection, then clears it — a one-shot signal, not a persisted one.
+   */
+  focusRequest: { target: 'seismicLine' | 'section'; id: string } | null;
+  setFocusRequest: (f: { target: 'seismicLine' | 'section'; id: string } | null) => void;
 }
 
 export const createFrameworkSlice: StateCreator<Store, [], [], FrameworkSlice> = (set) => ({
@@ -108,4 +116,6 @@ export const createFrameworkSlice: StateCreator<Store, [], [], FrameworkSlice> =
       }
       return { seismicHorizons: { ...s.seismicHorizons, [label]: restLines } };
     }),
+  focusRequest: null,
+  setFocusRequest: (f) => set({ focusRequest: f }),
 });

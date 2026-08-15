@@ -2,7 +2,7 @@ import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from '
 import {
   Layers, Share2, FolderOpen, MessageSquare,
   MousePointer2, Square, PenLine, Milestone, Type, Table as TableIcon,
-  Navigation, Spline, Upload,
+  Navigation, Spline, Upload, Database,
 } from 'lucide-react';
 import { useStore } from './store';
 import { WellLogPlate, wellDepthExtent } from './components/WellLogPlate';
@@ -18,6 +18,7 @@ import { ReservesSummary } from './components/ReservesSummary';
 import { CrossplotView } from './components/CrossplotView';
 import { SeismicView } from './components/SeismicView';
 import { CrossSectionView } from './components/CrossSectionView';
+import { DataPanel } from './components/DataPanel';
 
 import {
   bootstrap, persist, createProject, renameProject, switchProject, deleteProject,
@@ -80,6 +81,7 @@ export default function App() {
   const setCurrentProject = useStore((s) => s.setCurrentProject);
   const hiddenTracks = useStore((s) => s.hiddenTracks);
   const toggleTrack = useStore((s) => s.toggleTrack);
+  const setFocusRequest = useStore((s) => s.setFocusRequest);
   const selectedMarker = markers.find((m) => m.id === selectedMarkerId) ?? null;
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -89,6 +91,7 @@ export default function App() {
   const [depthWindow, setDepthWindow] = useState<[number, number] | null>(null);
   const [cursorDepth, setCursorDepth] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [dataPanelOpen, setDataPanelOpen] = useState(false);
   const [focusedWellId, setFocusedWellId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -249,6 +252,9 @@ export default function App() {
             <Milestone size={16} strokeWidth={1.75} />
           </button>
           <ExportMenu bodyRef={bodyRef} depthWindow={effectiveWindow} />
+          <button className={`iconbtn ${dataPanelOpen ? 'on' : ''}`} title="Данные проекта" onClick={() => setDataPanelOpen((o) => !o)}>
+            <Database size={16} strokeWidth={1.75} />
+          </button>
           <button className="btn ghost sm" title="Добавить демо-скважину"
             onClick={() => loadLasText(buildDemoLas(wells.length), 'andromeda-demo.las')}>
             Демо
@@ -404,6 +410,23 @@ export default function App() {
       </footer>
 
       {showImport && <ImportModal onClose={() => setShowImport(false)} />}
+
+      <DataPanel
+        open={dataPanelOpen}
+        onClose={() => setDataPanelOpen(false)}
+        wells={wells}
+        markers={markers}
+        onActivateWell={setActiveWell}
+        onSelectMarker={selectMarker}
+        onShow={(t, focus) => {
+          setTab(t as TabKey);
+          if (focus) setFocusRequest(focus);
+          // The panel docks to the same right edge the marker inspector and
+          // (on narrower windows) other views' own panels use — closing on
+          // navigate avoids sitting on top of whatever "Показать" just opened.
+          setDataPanelOpen(false);
+        }}
+      />
     </div>
   );
 }

@@ -84,6 +84,8 @@ export function SeismicView({ wells, markers }: Props) {
   const faults = useStore((s) => s.faults);
   const setFaults = useStore((s) => s.setFaults);
   const setSegyLineTie = useStore((s) => s.setSegyLineTie);
+  const focusRequest = useStore((s) => s.focusRequest);
+  const setFocusRequest = useStore((s) => s.setFocusRequest);
 
   const edit = edits[lineId];
   const setEdit = (e: EditState | null) => setEdits((prev) => ({ ...prev, [lineId]: e }));
@@ -192,6 +194,14 @@ export function SeismicView({ wells, markers }: Props) {
   // picked on — its "local" half is a coordinate in that specific line's
   // own, unresolved frame.
   useEffect(() => { setTieDraft([]); setTieMode(false); }, [lineId]);
+  // "Show this" from the data panel — one-shot: apply the requested line
+  // selection, then clear the signal so it doesn't re-fire on its own.
+  useEffect(() => {
+    if (focusRequest?.target === 'seismicLine') {
+      setLineId(focusRequest.id);
+      setFocusRequest(null);
+    }
+  }, [focusRequest, setFocusRequest]);
 
   // Plot geometry — shared by the draw effect and the pointer handlers.
   const geom = useMemo(() => {

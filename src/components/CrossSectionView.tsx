@@ -41,6 +41,8 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
   const [size, setSize] = useState({ w: 800, h: 500 });
   const sections = useStore((s) => s.sections);
   const faults = useStore((s) => s.faults);
+  const focusRequest = useStore((s) => s.focusRequest);
+  const setFocusRequest = useStore((s) => s.setFocusRequest);
   const [sectionId, setSectionId] = useState<string | null>(null);
   const [hidden, setHidden] = useState<string[]>([]);
 
@@ -52,6 +54,15 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
     setSize({ w: el.clientWidth, h: el.clientHeight });
     return () => ro.disconnect();
   }, []);
+
+  // "Show this" from the data panel — one-shot: select the requested line,
+  // then clear the signal so it doesn't re-fire on its own.
+  useEffect(() => {
+    if (focusRequest?.target === 'section') {
+      setSectionId(focusRequest.id);
+      setFocusRequest(null);
+    }
+  }, [focusRequest, setFocusRequest]);
 
   const metric = useMemo(() => metricWells(wells), [wells]);
   const coordWells = useMemo(
