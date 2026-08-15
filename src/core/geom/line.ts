@@ -79,6 +79,13 @@ export function sampleAlongPolyline(pts: Pt[], step: number): (Pt & { arc: numbe
   return out;
 }
 
+// A point built by interpolating along one of the two lines (as a seismic
+// fault pick's endpoint is, by construction) lands exactly at t=0/1 or
+// u=0/1 in exact math, but floating-point round-trip through that same
+// interpolation can land a few ULPs on the wrong side of the boundary —
+// rejecting a crossing the two segments were deliberately built to share.
+const EDGE_EPS = 1e-7;
+
 function segmentIntersectionT(p1: Pt, p2: Pt, p3: Pt, p4: Pt): number | null {
   const d1x = p2.x - p1.x, d1y = p2.y - p1.y;
   const d2x = p4.x - p3.x, d2y = p4.y - p3.y;
@@ -86,8 +93,8 @@ function segmentIntersectionT(p1: Pt, p2: Pt, p3: Pt, p4: Pt): number | null {
   if (Math.abs(denom) < 1e-9) return null; // parallel (or collinear) — no single crossing point
   const t = ((p3.x - p1.x) * d2y - (p3.y - p1.y) * d2x) / denom;
   const u = ((p3.x - p1.x) * d1y - (p3.y - p1.y) * d1x) / denom;
-  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
-  return t;
+  if (t < -EDGE_EPS || t > 1 + EDGE_EPS || u < -EDGE_EPS || u > 1 + EDGE_EPS) return null;
+  return Math.max(0, Math.min(1, t));
 }
 
 function unit(dx: number, dy: number): Pt {

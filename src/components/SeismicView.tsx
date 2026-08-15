@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { Marker, Well } from '../types';
 import {
-  buildFieldSection, autoTrackHorizon, horizonControls,
+  buildFieldSection, autoTrackHorizon, horizonControls, pointOnLine,
   sampleNodes, interpolateHorizon, tieToWells, sampleHorizonAt, EARTH,
   type HorizonNode, type FieldSection,
 } from '../seismic';
@@ -63,12 +63,19 @@ export function SeismicView({ wells, markers }: Props) {
   const [calModel, setCalModel] = useState<VelocityModel | null>(null);
   /** Numbering for picks seeded by clicking an imported line. */
   const [pickSeq, setPickSeq] = useState(1);
+  const [faultPickMode, setFaultPickMode] = useState(false);
+  /** Pending, uncommitted picks — one point per synthetic line isn't enough to
+   * place a fault trace (a line only tells you where it crosses, not which
+   * way the fault runs), so a second pick on the other line supplies that,
+   * the same loop-tie idea the horizon picking already uses. */
+  const [faultPicks, setFaultPicks] = useState<Record<LineId, { f: number; twt: number } | null>>({});
   const checkshots = useStore((s) => s.checkshots);
   const segyLines = useStore((s) => s.segyLines);
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   const setSeismicHorizon = useStore((s) => s.setSeismicHorizon);
   const clearSeismicHorizon = useStore((s) => s.clearSeismicHorizon);
   const faults = useStore((s) => s.faults);
+  const setFaults = useStore((s) => s.setFaults);
 
   const edit = edits[lineId];
   const setEdit = (e: EditState | null) => setEdits((prev) => ({ ...prev, [lineId]: e }));
@@ -103,6 +110,13 @@ export function SeismicView({ wells, markers }: Props) {
     for (const w of coordWells) if (w.survey?.length) m.set(w.id, computeTrajectory(w.survey));
     return m;
   }, [coordWells]);
+  /** Markers with enough picks to grid, same rule the map uses — a new
+   * seismic-picked fault defaults to cutting all of them, same as a
+   * map-drawn one, editable afterward from the map's fault list. */
+  const mappable = useMemo(() => {
+    const ids = new Set(coordWells.map((w) => w.id));
+    return markers.filter((m) => Object.keys(m.depths).filter((id) => ids.has(id) && Number.isFinite(m.depths[id])).length >= 3);
+  }, [markers, coordWells]);
   // Both lines are built together (geometry is cheap) so they can be tied at their
   // crossing point regardless of which one is on screen; only the active line's
   // raster gets rendered.
@@ -152,7 +166,7 @@ export function SeismicView({ wells, markers }: Props) {
 
   // Drop stale picks on both lines when the underlying wells/markers change —
   // switching which line is on screen must NOT clear the other line's work.
-  useEffect(() => { setEdits({}); }, [coordWells, markers]);
+  useEffect(() => { setEdits({}); setFaultPicks({}); setFaultPickMode(false); }, [coordWells, markers]);
 
   // Plot geometry — shared by the draw effect and the pointer handlers.
   const geom = useMemo(() => {
@@ -307,6 +321,27 @@ export function SeismicView({ wells, markers }: Props) {
     });
   };
 
+  // A straight trace between the two lines' picks — the minimum a fault
+  // interpretation on 2D lines can honestly give: exactly two real points,
+  // no invented strike beyond what they define. Dip stays unset (typed in
+  // later from the map, like any other fault) — a single point per line
+  // carries no separation to derive an angle from either.
+  const faultPickPair = faultPicks.A && faultPicks.B && fieldA && fieldB
+    ? { a: pointOnLine(fieldA.line, faultPicks.A.f), b: pointOnLine(fieldB.line, faultPicks.B.f) }
+    : null;
+  const createFault = () => {
+    if (!faultPickPair) return;
+    const n = faults.reduce((mx, f) => Math.max(mx, Number(f.id.replace(/\D/g, '')) || 0), 0) + 1;
+    setFaults((fs) => [...fs, {
+      id: `fault-${n}`,
+      label: `Разлом ${n}`,
+      markerIds: mappable.map((m) => m.id),
+      trace: [faultPickPair.a, faultPickPair.b],
+    }]);
+    setFaultPicks({});
+    setFaultPickMode(false);
+  };
+
   // --- Node drag editing ---
   const nearestNode = (mx: number, my: number): number | null => {
     if (!edit || !geom || !field) return null;
@@ -324,6 +359,15 @@ export function SeismicView({ wells, markers }: Props) {
   };
   const onDown = (e: PointerEvent<HTMLCanvasElement>) => {
     const { mx, my } = mouse(e);
+    // Fault picking takes priority over horizon editing while active — a
+    // click means "mark the fault here," not "drag the nearest node."
+    if (faultPickMode) {
+      if (!isImported && geom && field && mx > geom.L && my > geom.T) {
+        const f = clamp((mx - geom.L) / geom.pw, 0, 1);
+        setFaultPicks((prev) => ({ ...prev, [lineId]: { f, twt: clamp(geom.twtOfY(my), geom.t0, geom.tEnd) } }));
+      }
+      return;
+    }
     // An imported line carries no well tops, so there is nothing to seed a pick
     // from: the click itself is the seed. Autotracking then follows the event
     // from there exactly as it does on a synthetic line.
@@ -337,6 +381,10 @@ export function SeismicView({ wells, markers }: Props) {
     if (k != null) { dragRef.current = k; canvasRef.current!.setPointerCapture(e.pointerId); }
   };
   const onMove = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (faultPickMode) {
+      if (canvasRef.current) canvasRef.current.style.cursor = isImported ? 'not-allowed' : 'crosshair';
+      return;
+    }
     if (!edit) {
       if (canvasRef.current) canvasRef.current.style.cursor = isImported ? 'crosshair' : 'default';
       return;
@@ -491,6 +539,17 @@ export function SeismicView({ wells, markers }: Props) {
       ctx.font = '11px ui-monospace, monospace';
     }
 
+    // A pending fault pick on this line, not yet a real fault — needs the
+    // other line's pick too before it becomes one.
+    const pendingPick = !isImported ? faultPicks[lineId] : null;
+    if (pendingPick) {
+      const warn = v('--warn', '#ff9f0a');
+      const x = xOf(pendingPick.f), y = yOf(pendingPick.twt);
+      ctx.strokeStyle = warn; ctx.fillStyle = warn; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x - 8, y); ctx.lineTo(x + 8, y); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+    }
+
     // Editable horizon: interpolated line + draggable node handles.
     if (edit && horizonTwt) {
       const n = section.nTraces;
@@ -513,7 +572,7 @@ export function SeismicView({ wells, markers }: Props) {
     for (let i = 0; i < lw; i++) { const [r, g, b] = seismicColor((i / lw) * 2 - 1); ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(lx + i, ly, 1, lh); }
     ctx.strokeStyle = border; ctx.strokeRect(lx, ly, lw, lh);
     ctx.fillStyle = text3; ctx.textAlign = 'center'; ctx.fillText('амплитуда −/+', lx + lw / 2, ly - 5);
-  }, [field, image, size, geom, edit, horizonTwt, crossing, lineId, faultCrossings, conv]);
+  }, [field, image, size, geom, edit, horizonTwt, crossing, lineId, faultCrossings, conv, faultPicks, isImported]);
 
   if (wells.length === 0) {
     return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Загрузите скважины — здесь появится синтетический сейсмо-разрез вдоль линии скважин с привязкой кровель.</p></div></div>;
@@ -555,6 +614,26 @@ export function SeismicView({ wells, markers }: Props) {
             />
             {edit && <div className="seismic-hint">Перетащите узлы, чтобы поправить горизонт.</div>}
             {crossHint && <div className="seismic-hint">{crossHint}</div>}
+          </>
+        )}
+
+        {!isImported && (
+          <>
+            <div className="seismic-panel-h seismic-panel-h2">Разлом</div>
+            <button className={`seismic-vel-btn ${faultPickMode ? 'on' : ''}`}
+              onClick={() => setFaultPickMode((m) => !m)}>
+              {faultPickMode ? 'отмена' : 'снять на этой линии'}
+            </button>
+            {faultPickMode && <div className="seismic-hint">Кликните по разрыву отражателя.</div>}
+            {(faultPicks.A || faultPicks.B) && (
+              <div className="seismic-hint">
+                Точка снята: {(['A', 'B'] as LineId[]).filter((id) => faultPicks[id]).map((id) => lineLabel(id)).join(', ')}.
+                {!faultPickPair && ' Снимите то же место и на второй линии.'}
+              </div>
+            )}
+            {faultPickPair && (
+              <button className="seismic-apply" onClick={createFault}>Создать разлом</button>
+            )}
           </>
         )}
 
