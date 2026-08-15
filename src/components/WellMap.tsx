@@ -7,11 +7,11 @@ import { estimateThrow } from '../core/geom/fault';
 import { buildSurface, type ControlPoint } from '../core/framework';
 import { clusterPoints, clusterGap } from '../core/geom/cluster';
 import { SurfacePicker } from './SurfacePicker';
-import { tvdss } from '../core/crs';
 import { useStore } from '../store';
 import type { FaultDef } from '../store/slices/framework';
-import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../wells/deviation';
+import { computeTrajectory, positionAtMd, type TrajPoint } from '../wells/deviation';
 import { metricWells } from '../wells/coords';
+import { tvdssAt as tvdssAtOf, posAt as posAtOf, structuralControlPoints } from '../wells/structure';
 import { marchingSquares } from '../core/geom/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../reserves/volumetrics';
 import { aggregateZone, DEFAULT_PETRO, type PetroParams } from '../wells/petrophysics';
@@ -134,25 +134,13 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     return m;
   }, [coordWells]);
   const anyDeviated = trajs.size > 0;
-  const tvdssAt = (w: Well, md: number) => tvdss(tvdAtMd(trajs.get(w.id) ?? [], md), w.kb);
-  const posAt = (w: Well, md: number) => {
-    const p = positionAtMd(trajs.get(w.id) ?? [], md);
-    return { x: w.x! + p.east, y: w.y! + p.north };
-  };
+  const tvdssAt = (w: Well, md: number) => tvdssAtOf(trajs, w, md);
+  const posAt = (w: Well, md: number) => posAtOf(trajs, w, md);
 
   // Raw structure control points for a marker, independent of the current
   // view/mode — a fault's throw is a property of the horizon it's tied to, so
   // it shouldn't shift just because the user switched tabs.
-  const structurePointsFor = (marker: Marker): ControlPoint[] => {
-    const points: ControlPoint[] = [];
-    for (const w of coordWells) {
-      const md = marker.depths[w.id];
-      if (!Number.isFinite(md)) continue;
-      const pos = posAt(w, md);
-      points.push({ x: pos.x, y: pos.y, z: tvdssAt(w, md) });
-    }
-    return points;
-  };
+  const structurePointsFor = (marker: Marker): ControlPoint[] => structuralControlPoints(marker, coordWells, trajs);
 
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   // Seismic-derived horizon control points for the selected structure surface,

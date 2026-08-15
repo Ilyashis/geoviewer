@@ -9,11 +9,15 @@ import { SurfacePicker } from './SurfacePicker';
 import { buildSurface } from '../core/framework';
 import { metricWells } from '../wells/coords';
 import { segmentIntersection } from '../core/geom/intersect';
+import { polylineCrossings } from '../core/geom/line';
+import { apparentDipDeg, dipDirection, estimateThrow } from '../core/geom/fault';
 import {
-  twtToDepth, velocityAt, calibrateVelocity, DEFAULT_VELOCITY, COMPACTION,
+  twtToDepth, depthToTwt, velocityAt, calibrateVelocity, DEFAULT_VELOCITY, COMPACTION,
   type VelocityModel, type VelocitySample,
 } from '../core/velocity';
 import { fieldVelocityTable } from '../wells/checkshot';
+import { computeTrajectory, type TrajPoint } from '../wells/deviation';
+import { structuralControlPoints } from '../wells/structure';
 import { useStore } from '../store';
 
 interface Props {
@@ -64,6 +68,7 @@ export function SeismicView({ wells, markers }: Props) {
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   const setSeismicHorizon = useStore((s) => s.setSeismicHorizon);
   const clearSeismicHorizon = useStore((s) => s.clearSeismicHorizon);
+  const faults = useStore((s) => s.faults);
 
   const edit = edits[lineId];
   const setEdit = (e: EditState | null) => setEdits((prev) => ({ ...prev, [lineId]: e }));
@@ -93,6 +98,11 @@ export function SeismicView({ wells, markers }: Props) {
     () => metricWells(wells).filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)),
     [wells],
   );
+  const trajs = useMemo(() => {
+    const m = new Map<string, TrajPoint[]>();
+    for (const w of coordWells) if (w.survey?.length) m.set(w.id, computeTrajectory(w.survey));
+    return m;
+  }, [coordWells]);
   // Both lines are built together (geometry is cheap) so they can be tied at their
   // crossing point regardless of which one is on screen; only the active line's
   // raster gets rendered.
@@ -158,6 +168,41 @@ export function SeismicView({ wells, markers }: Props) {
       twtOfY: (y: number) => t0 + ((y - T) / ph) * (tEnd - t0),
     };
   }, [field, size]);
+
+  /**
+   * Where the map's faults cross this line, as apparent dip in TIME — only
+   * for the synthetic lines (`!isImported`): an imported SEG-Y line's
+   * coordinates are in the survey's own, unresolved CRS (see the note below),
+   * so a map-space fault trace has no honest position on it at all.
+   * Direction is derived from `estimateThrow`'s sign at the fault's own cut
+   * markers, same as everywhere else dip shows up — not asked for twice.
+   */
+  const faultCrossings = useMemo(() => {
+    if (isImported || !field) return [];
+    const { p0, p1 } = field.line;
+    const lineLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+    if (lineLen <= 0) return [];
+    const out: { fault: (typeof faults)[number]; f: number; apparentDeg: number | null }[] = [];
+    for (const fault of faults) {
+      const crossings = polylineCrossings([p0, p1], fault.trace);
+      if (crossings.length === 0) continue;
+      let throwSign: number | null = null;
+      for (const id of fault.markerIds) {
+        const m = markers.find((mk) => mk.id === id);
+        if (!m) continue;
+        const t = estimateThrow(fault.trace, structuralControlPoints(m, coordWells, trajs));
+        if (t != null && t !== 0) { throwSign = t; break; }
+      }
+      for (const c of crossings) {
+        const apparentDeg = fault.dip != null && throwSign != null
+          ? apparentDipDeg(fault.dip, dipDirection(c.otherDir, throwSign), c.lineDir)
+          : null;
+        out.push({ fault, f: c.arc / lineLen, apparentDeg });
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isImported, field, faults, markers, coordWells, trajs]);
 
   // Interpolated per-trace horizon from the (edited) nodes.
   const horizonTwt = useMemo(
@@ -399,6 +444,53 @@ export function SeismicView({ wells, markers }: Props) {
       ctx.fillText('×', x, T + ph + 14);
     }
 
+    // Fault crossings: dashed, vertical unless a dip's been entered — same
+    // convention as the map-drawn cross-section, translated into TWT via the
+    // active depth-conversion model so the tilt is honest in this domain too.
+    // Parametrized by arc offset (not depth) and depth-clamped before
+    // converting to TWT, since a compaction model's log() has a domain edge
+    // an unclamped huge offset could cross.
+    if (faultCrossings.length > 0) {
+      const warn = v('--warn', '#ff9f0a');
+      const zTop = twtToDepth(conv, t0), zBot = twtToDepth(conv, tEnd);
+      const zAnchor = (zTop + zBot) / 2;
+      const zMargin = Math.max(zBot - zTop, 50);
+      const totalZSpan = (zBot - zTop) + zMargin * 2;
+      const lineLen = Math.hypot(field.line.p1.x - field.line.p0.x, field.line.p1.y - field.line.p0.y);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
+      for (const { f, apparentDeg } of faultCrossings) {
+        if (f < 0 || f > 1) continue;
+        ctx.strokeStyle = warn; ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        if (apparentDeg != null) {
+          const tanA = Math.tan((apparentDeg * Math.PI) / 180);
+          const span = Math.min(totalZSpan / Math.max(Math.abs(tanA), 1e-9), lineLen * 4);
+          const arc = f * lineLen;
+          const f1 = (arc - span) / lineLen, f2 = (arc + span) / lineLen;
+          const z1 = zAnchor - tanA * span, z2 = zAnchor + tanA * span;
+          ctx.moveTo(xOf(f1), yOf(depthToTwt(conv, z1)));
+          ctx.lineTo(xOf(f2), yOf(depthToTwt(conv, z2)));
+        } else {
+          const x = xOf(f);
+          ctx.moveTo(x, T); ctx.lineTo(x, T + ph);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.restore();
+      ctx.font = '10px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = warn;
+      for (const { fault, f, apparentDeg } of faultCrossings) {
+        if (f < 0 || f > 1) continue;
+        const label = apparentDeg == null ? fault.label : `${fault.label} (${Math.round(Math.abs(apparentDeg))}°)`;
+        ctx.fillText(label, xOf(f), T + 12);
+      }
+      ctx.font = '11px ui-monospace, monospace';
+    }
+
     // Editable horizon: interpolated line + draggable node handles.
     if (edit && horizonTwt) {
       const n = section.nTraces;
@@ -421,7 +513,7 @@ export function SeismicView({ wells, markers }: Props) {
     for (let i = 0; i < lw; i++) { const [r, g, b] = seismicColor((i / lw) * 2 - 1); ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(lx + i, ly, 1, lh); }
     ctx.strokeStyle = border; ctx.strokeRect(lx, ly, lw, lh);
     ctx.fillStyle = text3; ctx.textAlign = 'center'; ctx.fillText('амплитуда −/+', lx + lw / 2, ly - 5);
-  }, [field, image, size, geom, edit, horizonTwt, crossing, lineId]);
+  }, [field, image, size, geom, edit, horizonTwt, crossing, lineId, faultCrossings, conv]);
 
   if (wells.length === 0) {
     return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Загрузите скважины — здесь появится синтетический сейсмо-разрез вдоль линии скважин с привязкой кровель.</p></div></div>;

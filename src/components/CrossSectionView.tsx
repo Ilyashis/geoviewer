@@ -4,10 +4,10 @@ import { dataRadius, niceStep, sampleGrid, type ControlPoint } from '../core/geo
 import { polylineCrossings, projectOntoPolyline, sampleAlongPolyline } from '../core/geom/line';
 import { apparentDipDeg, dipDirection, estimateThrow } from '../core/geom/fault';
 import { buildSurface, type Mesh } from '../core/framework';
-import { tvdss } from '../core/crs';
 import { useStore } from '../store';
 import { metricWells } from '../wells/coords';
-import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../wells/deviation';
+import { computeTrajectory, type TrajPoint } from '../wells/deviation';
+import { tvdssAt as tvdssAtOf, structuralControlPoints } from '../wells/structure';
 import { SurfacePicker } from './SurfacePicker';
 
 interface Props {
@@ -64,11 +64,7 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
     for (const w of coordWells) if (w.survey?.length) m.set(w.id, computeTrajectory(w.survey));
     return m;
   }, [coordWells]);
-  const tvdssAt = (w: Well, md: number) => tvdss(tvdAtMd(trajs.get(w.id) ?? [], md), w.kb);
-  const posAt = (w: Well, md: number) => {
-    const p = positionAtMd(trajs.get(w.id) ?? [], md);
-    return { x: w.x! + p.east, y: w.y! + p.north };
-  };
+  const tvdssAt = (w: Well, md: number) => tvdssAtOf(trajs, w, md);
 
   const mappable = useMemo(() => {
     const ids = new Set(coordWells.map((w) => w.id));
@@ -102,16 +98,7 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
    * well in the project — deliberately not just the ones near the line, so
    * the interpolation the section samples is the same honest field-wide one
    * the map builds, not a thinner one starved of control by the line's path. */
-  const controlsFor = (marker: Marker): ControlPoint[] => {
-    const pts: ControlPoint[] = [];
-    for (const w of coordWells) {
-      const md = marker.depths[w.id];
-      if (!Number.isFinite(md)) continue;
-      const pos = posAt(w, md);
-      pts.push({ x: pos.x, y: pos.y, z: tvdssAt(w, md) });
-    }
-    return pts;
-  };
+  const controlsFor = (marker: Marker): ControlPoint[] => structuralControlPoints(marker, coordWells, trajs);
 
   const mesh = useMemo<Mesh | null>(() => {
     if (coordWells.length === 0) return null;
