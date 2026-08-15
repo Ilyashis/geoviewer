@@ -66,6 +66,7 @@ interface Field {
 export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [mode, setMode] = useState<Mode>('structure');
   const [surfaceId, setSurfaceId] = useState<string | null>(null);
@@ -98,6 +99,11 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const sectionDragRef = useRef<{ sectionId: string; idx: number } | null>(null);
   const [uncOn, setUncOn] = useState(false);
   const [spread, setSpread] = useState(20);
+  // Zoom/pan on top of the fit-to-view `layout` below — applied identically
+  // to the canvas raster (ctx transform) and the SVG overlay (<g transform>)
+  // so the two layers never drift apart.
+  const [pan, setPan] = useState({ x: 0, y: 0, k: 1 });
+  const panDragRef = useRef<{ pointerId: number; startX: number; startY: number; startPanX: number; startPanY: number; moved: boolean } | null>(null);
 
   // Project any lon/lat wells to metres first — everything below (gridding,
   // areas, volumes, distances) assumes a metric frame.
@@ -298,6 +304,9 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.w, size.h);
     if (!grid || !field) return;
+    // Pan/zoom applied here so every coordinate below (still plain toPx output,
+    // unaware of pan/zoom) lands in the right place without being rewritten.
+    ctx.setTransform(dpr * pan.k, 0, 0, dpr * pan.k, dpr * pan.x, dpr * pan.y);
 
     const { vmin, vmax } = field;
     const vt = (v: number) => (vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5);
@@ -352,7 +361,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       }
       ctx.stroke();
     }
-  }, [grid, field, layout, size, contact]);
+  }, [grid, field, layout, size, contact, pan]);
 
   // Log-derived net-pay stats for the isochore zone [top, base] across the mapped wells.
   const logStats = useMemo(() => {
@@ -519,13 +528,20 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const cancelSectionDraw = () => { setDrawingSection(false); setDraftSection([]); };
   const removeSection = (id: string) => setSections((ss) => ss.filter((s) => s.id !== id));
 
+  // Screen (client) px → world coords: undo pan/zoom first, then the
+  // fit-to-view layout, since `layout.toPx` output is what pan/zoom transforms.
+  const toWorld = (clientX: number, clientY: number, rect: DOMRect): Pt | null => {
+    if (!layout) return null;
+    return layout.fromPx((clientX - rect.left - pan.x) / pan.k, (clientY - rect.top - pan.y) / pan.k);
+  };
+
+  const MIN_K = 0.4, MAX_K = 16, PAN_CLICK_SLOP = 4;
+
+  // A background pointerdown might be the start of a click (place a draft
+  // vertex while drawing) or a drag-to-pan — resolved by movement, on pointerup.
   const svgDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!layout) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pt = layout.fromPx(e.clientX - rect.left, e.clientY - rect.top);
-    if (drawingPinch) { setPinchPts((pts) => [...pts, pt]); return; }
-    if (drawingFault) { setDraftFault((pts) => [...pts, pt]); return; }
-    if (drawingSection) { setDraftSection((pts) => [...pts, pt]); return; }
+    panDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, startPanX: pan.x, startPanY: pan.y, moved: false };
   };
   const vertexDown = (i: number) => (e: ReactPointerEvent<SVGCircleElement>) => {
     e.stopPropagation();
@@ -544,21 +560,66 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   };
   const svgMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!layout) return;
-    if (pinchDragRef.current == null && faultDragRef.current == null && sectionDragRef.current == null) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pt = layout.fromPx(e.clientX - rect.left, e.clientY - rect.top);
-    if (pinchDragRef.current != null) {
-      const idx = pinchDragRef.current;
-      setPinchPts((pts) => pts.map((p, k) => (k === idx ? pt : p)));
-    } else if (faultDragRef.current != null) {
-      const { faultId, idx } = faultDragRef.current;
-      setFaults((fs) => fs.map((f) => (f.id === faultId ? { ...f, trace: f.trace.map((p, k) => (k === idx ? pt : p)) } : f)));
-    } else if (sectionDragRef.current != null) {
-      const { sectionId, idx } = sectionDragRef.current;
-      setSections((ss) => ss.map((s) => (s.id === sectionId ? { ...s, points: s.points.map((p, k) => (k === idx ? pt : p)) } : s)));
+    if (pinchDragRef.current != null || faultDragRef.current != null || sectionDragRef.current != null) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const pt = toWorld(e.clientX, e.clientY, rect);
+      if (!pt) return;
+      if (pinchDragRef.current != null) {
+        const idx = pinchDragRef.current;
+        setPinchPts((pts) => pts.map((p, k) => (k === idx ? pt : p)));
+      } else if (faultDragRef.current != null) {
+        const { faultId, idx } = faultDragRef.current;
+        setFaults((fs) => fs.map((f) => (f.id === faultId ? { ...f, trace: f.trace.map((p, k) => (k === idx ? pt : p)) } : f)));
+      } else if (sectionDragRef.current != null) {
+        const { sectionId, idx } = sectionDragRef.current;
+        setSections((ss) => ss.map((s) => (s.id === sectionId ? { ...s, points: s.points.map((p, k) => (k === idx ? pt : p)) } : s)));
+      }
+      return;
     }
+    const drag = panDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
+    if (Math.abs(dx) > PAN_CLICK_SLOP || Math.abs(dy) > PAN_CLICK_SLOP) drag.moved = true;
+    if (drag.moved) setPan((p) => ({ ...p, x: drag.startPanX + dx, y: drag.startPanY + dy }));
   };
-  const svgUp = () => { pinchDragRef.current = null; faultDragRef.current = null; sectionDragRef.current = null; };
+  const svgUp = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (pinchDragRef.current != null || faultDragRef.current != null || sectionDragRef.current != null) {
+      pinchDragRef.current = null; faultDragRef.current = null; sectionDragRef.current = null;
+      return;
+    }
+    const drag = panDragRef.current;
+    panDragRef.current = null;
+    if (!drag || drag.pointerId !== e.pointerId || drag.moved || !layout) return;
+    // Not a pan — a plain click. Same three draw modes as before.
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pt = toWorld(e.clientX, e.clientY, rect);
+    if (!pt) return;
+    if (drawingPinch) { setPinchPts((pts) => [...pts, pt]); return; }
+    if (drawingFault) { setDraftFault((pts) => [...pts, pt]); return; }
+    if (drawingSection) { setDraftSection((pts) => [...pts, pt]); return; }
+  };
+  const resetView = () => setPan({ x: 0, y: 0, k: 1 });
+
+  // React's onWheel is registered passive at the root, so preventDefault()
+  // inside a synthetic handler throws — a plain DOM listener is required to
+  // stop the page from scrolling while zooming the map.
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el || !layout) return;
+    const onWheelNative = (e: globalThis.WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      setPan((p) => {
+        const k = Math.min(MAX_K, Math.max(MIN_K, p.k * factor));
+        const f = k / p.k;
+        return { k, x: mx - (mx - p.x) * f, y: my - (my - p.y) * f };
+      });
+    };
+    el.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', onWheelNative);
+  }, [layout]);
 
   if (wells.length === 0) {
     return (
@@ -611,9 +672,10 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   return (
     <div className="map" ref={wrapRef}>
       <canvas ref={canvasRef} className="map-canvas" style={{ width: size.w, height: size.h }} />
-      <svg className="map-svg" width={size.w} height={size.h}
-        style={{ cursor: drawingPinch || drawingFault || drawingSection ? 'crosshair' : undefined }}
+      <svg ref={svgRef} className="map-svg" width={size.w} height={size.h}
+        style={{ cursor: drawingPinch || drawingFault || drawingSection ? 'crosshair' : 'grab' }}
         onPointerDown={svgDown} onPointerMove={svgMove} onPointerUp={svgUp}>
+      <g transform={`translate(${pan.x} ${pan.y}) scale(${pan.k})`}>
         {pinchOn && pinchScreenPts.length > 0 && (
           <g className="map-pinch">
             {pinchClosed && (
@@ -679,6 +741,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             </g>
           );
         })}
+      </g>
       </svg>
 
       {mappable.length > 0 && (
@@ -795,6 +858,13 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       )}
 
       <div className={`map-north ${volResult && field ? 'aside' : ''}`}><Navigation size={16} strokeWidth={1.9} /> С</div>
+
+      {pan.k !== 1 || pan.x !== 0 || pan.y !== 0 ? (
+        <div className="map-zoom">
+          <span>{Math.round(pan.k * 100)}%</span>
+          <button className="map-export-btn" onClick={resetView}>Сбросить вид</button>
+        </div>
+      ) : null}
 
       {(drawingPinch || drawingFault || drawingSection) && (
         <div className="map-draw-hint">

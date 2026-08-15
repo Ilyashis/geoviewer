@@ -63,9 +63,10 @@ const TOOLS = [
 // (scene3d has .scene3d-hint), are left out rather than given a duplicate
 // or made-up hint.
 const TAB_HINTS: Partial<Record<TabKey, string>> = {
-  map: 'Клик по скважине — сделать активной',
+  map: 'Колесо — зум · перетаскивание — панорама · клик по скважине — сделать активной',
   tie: 'Клик по ячейке — ввести или изменить глубину пикировки',
   seismic: 'Клик по линии — пикировка горизонта · перетаскивание точки — правка',
+  section: 'Колесо — зум · перетаскивание — панорама',
 };
 
 export default function App() {
