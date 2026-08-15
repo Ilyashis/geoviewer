@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Marker, Well } from '../types';
 import { dataRadius, niceStep, sampleGrid, type ControlPoint } from '../core/geom/grid';
 import { polylineCrossings, projectOntoPolyline, sampleAlongPolyline } from '../core/geom/line';
+import { apparentDipDeg, dipDirection, estimateThrow } from '../core/geom/fault';
 import { buildSurface, type Mesh } from '../core/framework';
 import { tvdss } from '../core/crs';
 import { useStore } from '../store';
@@ -136,15 +137,40 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, mesh, shown, faults, coordWells, trajs]);
 
-  /** Where each fault's plan trace crosses the section line. `FaultDef` has no
-   * dip, only a plan trace, so this can only mark *where* it cuts the section
-   * — a vertical mark, not an invented inclined plane. */
+  /**
+   * Where each fault's plan trace crosses the section line, and — when the
+   * fault has a typed-in dip — the *apparent* dip this particular crossing
+   * shows (a fault's true dip looks different depending on the angle the
+   * section happens to cut across it). Direction isn't asked for separately:
+   * it's derived from the sign of `estimateThrow` at whichever of the
+   * fault's cut markers has a computable throw, the same "computed over
+   * typed" split used everywhere else throw shows up. No dip entered, or no
+   * throw sign derivable (no control points on one side) ⇒ apparentDeg is
+   * null and the caller draws a plain vertical mark, same as before dip existed.
+   */
   const faultCrossings = useMemo(() => {
     if (!section || section.points.length < 2) return [];
-    return faults
-      .map((f) => ({ fault: f, arcs: polylineCrossings(section.points, f.trace) }))
-      .filter((fc) => fc.arcs.length > 0);
-  }, [section, faults]);
+    const out: { fault: (typeof faults)[number]; arc: number; apparentDeg: number | null }[] = [];
+    for (const f of faults) {
+      const crossings = polylineCrossings(section.points, f.trace);
+      if (crossings.length === 0) continue;
+      let throwSign: number | null = null;
+      for (const id of f.markerIds) {
+        const m = markers.find((mk) => mk.id === id);
+        if (!m) continue;
+        const t = estimateThrow(f.trace, controlsFor(m));
+        if (t != null && t !== 0) { throwSign = t; break; }
+      }
+      for (const c of crossings) {
+        const apparentDeg = f.dip != null && throwSign != null
+          ? apparentDipDeg(f.dip, dipDirection(c.otherDir, throwSign), c.lineDir)
+          : null;
+        out.push({ fault: f, arc: c.arc, apparentDeg });
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, faults, markers, coordWells, trajs]);
 
   const draw = () => {
     const canvas = canvasRef.current;
@@ -217,22 +243,43 @@ export function CrossSectionView({ wells, markers, activeWellId }: Props) {
       ctx.stroke();
     }
 
-    // Fault crossings: a dashed vertical mark at the arc where the trace cuts
-    // the line — no dip is stored, so this is honest about not knowing the angle.
+    // Fault crossings: a dashed mark at the arc where the trace cuts the
+    // line — vertical when the dip (or its direction) isn't known, tilted to
+    // the *apparent* dip otherwise. Parametrized by arc, not by depth, so it
+    // stays well-defined even when the apparent dip is near 0° (the line
+    // would need an unbounded arc range to change depth at all) — clip does
+    // the work of keeping it inside the plot instead of clamping by hand.
     const warn = v('--warn', '#ff9f0a');
+    const zAnchor = (zMin + zMax) / 2;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
+    for (const { arc, apparentDeg } of faultCrossings) {
+      if (arc < 0 || arc > lineLength) continue;
+      ctx.strokeStyle = warn; ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      if (apparentDeg != null) {
+        const tanA = Math.tan((apparentDeg * Math.PI) / 180);
+        const span = Math.max(lineLength, 1);
+        const arc1 = arc - span, arc2 = arc + span;
+        ctx.moveTo(xOf(arc1), yOf(zAnchor + tanA * (arc1 - arc)));
+        ctx.lineTo(xOf(arc2), yOf(zAnchor + tanA * (arc2 - arc)));
+      } else {
+        const x = xOf(arc);
+        ctx.moveTo(x, T); ctx.lineTo(x, T + ph);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+
     ctx.font = '10px ui-monospace, monospace';
     ctx.textAlign = 'center';
-    for (const { fault, arcs } of faultCrossings) {
-      for (const arc of arcs) {
-        if (arc < 0 || arc > lineLength) continue;
-        const x = xOf(arc);
-        ctx.strokeStyle = warn; ctx.lineWidth = 1.5;
-        ctx.setLineDash([5, 4]);
-        ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, T + ph); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = warn;
-        ctx.fillText(fault.label, x, T + 12);
-      }
+    ctx.fillStyle = warn;
+    for (const { fault, arc, apparentDeg } of faultCrossings) {
+      if (arc < 0 || arc > lineLength) continue;
+      const label = apparentDeg == null ? fault.label : `${fault.label} (${Math.round(Math.abs(apparentDeg))}°)`;
+      ctx.fillText(label, xOf(arc), T + 12);
     }
     ctx.font = '11px ui-monospace, monospace';
 

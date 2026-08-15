@@ -21,6 +21,16 @@ export interface FaultDef {
   label: string;
   markerIds: string[];
   trace: Pt[];
+  /**
+   * True dip, degrees from horizontal (90 = vertical). Unlike throw, this
+   * can't be derived from picks alone — a plan-view trace plus scattered
+   * depths gives no separation to measure an angle from — so it's the one
+   * fault property that's typed in rather than computed. Which way it dips
+   * is still derived, from the sign of `estimateThrow` at the fault's cut
+   * markers, not asked for separately. Absent ⇒ unknown, same as before
+   * this field existed — rendered vertical, not assumed flat or steep.
+   */
+  dip?: number;
 }
 
 /**

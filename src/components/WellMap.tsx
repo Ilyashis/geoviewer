@@ -501,6 +501,10 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   };
   const cancelFaultDraw = () => { setDrawingFault(false); setDraftFault([]); setDraftFaultMarkerIds([]); };
   const removeFault = (id: string) => setFaults((fs) => fs.filter((f) => f.id !== id));
+  // Dip has no picks to derive it from (unlike throw) — it's the one fault
+  // property typed in directly. Blank clears it back to "unknown/vertical".
+  const setFaultDip = (id: string, dip: number | undefined) =>
+    setFaults((fs) => fs.map((f) => (f.id === id ? { ...f, dip } : f)));
 
   // --- Section lines: same open-polyline pattern as faults, no marker gating ---
   const startSectionDraw = () => { setDrawingSection(true); setDraftSection([]); setDrawingPinch(false); setDrawingFault(false); };
@@ -746,6 +750,15 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
                   <span className="map-fault-dot" />
                   <span className="map-fault-label">{f.label} · {cutLabel}</span>
                   <span className="map-fault-throw">{t == null ? '—' : `${Math.round(Math.abs(t))} м`}</span>
+                  <input
+                    className="map-fault-dip" type="number" min={1} max={89} placeholder="90°"
+                    title="Угол падения, ° от горизонтали — не вычисляется из пикетов, вводится вручную"
+                    value={f.dip ?? ''}
+                    onChange={(e) => {
+                      const v = e.target.value === '' ? undefined : Math.max(1, Math.min(89, Number(e.target.value)));
+                      setFaultDip(f.id, Number.isFinite(v as number) ? v : undefined);
+                    }}
+                  />
                   <button className="map-fault-del" title="Удалить разлом" onClick={() => removeFault(f.id)}>×</button>
                 </div>
               );

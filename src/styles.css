@@ -806,6 +806,11 @@ body {
 .map-fault-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn, #ff9f0a); flex-shrink: 0; }
 .map-fault-label { color: var(--text-2); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .map-fault-throw { font-family: var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
+.map-fault-dip {
+  width: 34px; flex-shrink: 0; background: var(--canvas); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-2); font-size: 11px; font-family: var(--mono); text-align: right; padding: 2px 4px;
+}
+.map-fault-dip:focus { color: var(--text); border-color: var(--warn, #ff9f0a); outline: none; }
 .map-fault-del {
   border: 0; background: transparent; color: var(--text-3); font-size: 15px; line-height: 1; cursor: pointer; padding: 0 2px;
 }

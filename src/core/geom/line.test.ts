@@ -73,22 +73,32 @@ describe('sampleAlongPolyline', () => {
 describe('polylineCrossings', () => {
   it('пересечение на первом отрезке даёт arc до точки пересечения', () => {
     const other = [{ x: 50, y: -20 }, { x: 50, y: 20 }];
-    expect(polylineCrossings(line, other)).toEqual([50]);
+    const arcs = polylineCrossings(line, other);
+    expect(arcs.map((c) => c.arc)).toEqual([50]);
   });
 
   it('учитывает излом — пересечение на втором отрезке', () => {
     const other = [{ x: 80, y: 50 }, { x: 120, y: 50 }];
     const arcs = polylineCrossings(line, other);
     expect(arcs).toHaveLength(1);
-    expect(arcs[0]).toBeCloseTo(150, 6); // 100 (первый отрезок) + 50
+    expect(arcs[0].arc).toBeCloseTo(150, 6); // 100 (первый отрезок) + 50
   });
 
   it('несколько пересечений — все найдены и отсортированы', () => {
     const other = [{ x: 20, y: -10 }, { x: 20, y: 10 }, { x: 70, y: 10 }, { x: 70, y: -10 }];
     const arcs = polylineCrossings(line, other);
     expect(arcs).toHaveLength(2);
-    expect(arcs[0]).toBeCloseTo(20, 6);
-    expect(arcs[1]).toBeCloseTo(70, 6);
+    expect(arcs[0].arc).toBeCloseTo(20, 6);
+    expect(arcs[1].arc).toBeCloseTo(70, 6);
+  });
+
+  it('несёт локальные касательные обеих линий в точке пересечения', () => {
+    const other = [{ x: 50, y: -20 }, { x: 50, y: 20 }]; // straight up (0,1)
+    const [c] = polylineCrossings(line, other);
+    expect(c.lineDir.x).toBeCloseTo(1, 6); // `line`'s first leg runs along +x
+    expect(c.lineDir.y).toBeCloseTo(0, 6);
+    expect(c.otherDir.x).toBeCloseTo(0, 6);
+    expect(c.otherDir.y).toBeCloseTo(1, 6);
   });
 
   it('нет пересечений — пустой массив', () => {

@@ -90,25 +90,43 @@ function segmentIntersectionT(p1: Pt, p2: Pt, p3: Pt, p4: Pt): number | null {
   return t;
 }
 
+function unit(dx: number, dy: number): Pt {
+  const len = Math.hypot(dx, dy);
+  return len > 1e-9 ? { x: dx / len, y: dy / len } : { x: 0, y: 0 };
+}
+
+export interface Crossing {
+  /** Arc-length position along `line` where the crossing occurs. */
+  arc: number;
+  /** Unit tangent of `line`'s own segment at the crossing. */
+  lineDir: Pt;
+  /** Unit tangent of `other`'s segment at the crossing. */
+  otherDir: Pt;
+}
+
 /**
- * Arc-length positions along `line` where the polyline `other` crosses it —
- * used to mark a fault trace on a cross-section. A fault is stored as a plan
- * trace with no dip (`FaultDef` has no plane), so this only answers *where*
- * along the section it cuts, not at what angle; the caller draws that as a
- * vertical mark rather than an invented inclined plane.
+ * Where the polyline `other` crosses `line` — used to mark a fault trace on
+ * a cross-section. Carries both segments' local tangents (not just the arc
+ * position) so a caller with a known dip can work out the *apparent* dip
+ * for this particular crossing (`core/geom/fault.ts`'s `apparentDipDeg`) —
+ * a fault's true dip looks different depending on which way the section
+ * happens to cut across it.
  */
-export function polylineCrossings(line: Pt[], other: Pt[]): number[] {
+export function polylineCrossings(line: Pt[], other: Pt[]): Crossing[] {
   if (line.length < 2 || other.length < 2) return [];
-  const arcs: number[] = [];
+  const out: Crossing[] = [];
   let cum = 0;
   for (let i = 1; i < line.length; i++) {
     const a = line[i - 1], b = line[i];
     const segLen = Math.hypot(b.x - a.x, b.y - a.y);
     for (let j = 1; j < other.length; j++) {
-      const t = segmentIntersectionT(a, b, other[j - 1], other[j]);
-      if (t != null) arcs.push(cum + t * segLen);
+      const c = other[j - 1], d = other[j];
+      const t = segmentIntersectionT(a, b, c, d);
+      if (t != null) {
+        out.push({ arc: cum + t * segLen, lineDir: unit(b.x - a.x, b.y - a.y), otherDir: unit(d.x - c.x, d.y - c.y) });
+      }
     }
     cum += segLen;
   }
-  return arcs.sort((x, y) => x - y);
+  return out.sort((x, y) => x.arc - y.arc);
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sideOfPolyline, sameFaultBlock, estimateThrow } from './fault';
+import { sideOfPolyline, sameFaultBlock, estimateThrow, dipDirection, apparentDipDeg } from './fault';
 
 const vertical = [{ x: 5, y: -10 }, { x: 5, y: 10 }]; // straight fault along x=5
 
@@ -61,5 +61,48 @@ describe('estimateThrow', () => {
 
   it('returns null for a degenerate trace', () => {
     expect(estimateThrow([{ x: 0, y: 0 }], [{ x: 1, y: 1, z: 100 }])).toBeNull();
+  });
+});
+
+describe('dipDirection', () => {
+  it('points to the side > 0 (left of the tangent) for a negative throw sign', () => {
+    // Tangent due east (1,0) — left of "east" is north (0,1).
+    const d = dipDirection({ x: 1, y: 0 }, -1);
+    expect(d.x).toBeCloseTo(0, 6);
+    expect(d.y).toBeCloseTo(1, 6);
+  });
+
+  it('points to the side < 0 (right of the tangent) for a non-negative throw sign', () => {
+    const d = dipDirection({ x: 1, y: 0 }, 1);
+    expect(d.x).toBeCloseTo(0, 6);
+    expect(d.y).toBeCloseTo(-1, 6);
+  });
+
+  it('is a unit vector regardless of the input tangent length', () => {
+    const d = dipDirection({ x: 30, y: 40 }, 1); // length-50 tangent
+    expect(Math.hypot(d.x, d.y)).toBeCloseTo(1, 6);
+  });
+
+  it('returns the zero vector for a degenerate (zero-length) tangent', () => {
+    expect(dipDirection({ x: 0, y: 0 }, 1)).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe('apparentDipDeg', () => {
+  it('equals the true dip when the section runs straight along the dip direction', () => {
+    expect(apparentDipDeg(45, { x: 0, y: -1 }, { x: 0, y: -1 })).toBeCloseTo(45, 6);
+  });
+
+  it('flips sign when the section runs opposite the dip direction', () => {
+    expect(apparentDipDeg(45, { x: 0, y: -1 }, { x: 0, y: 1 })).toBeCloseTo(-45, 6);
+  });
+
+  it('is flat (0°) when the section runs along strike, perpendicular to dip', () => {
+    expect(apparentDipDeg(60, { x: 0, y: -1 }, { x: 1, y: 0 })).toBeCloseTo(0, 6);
+  });
+
+  it('is null when either direction is degenerate', () => {
+    expect(apparentDipDeg(45, { x: 0, y: 0 }, { x: 1, y: 0 })).toBeNull();
+    expect(apparentDipDeg(45, { x: 0, y: -1 }, { x: 0, y: 0 })).toBeNull();
   });
 });
