@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { Download, Milestone, Layers, Image as ImageIcon, FileText, Route, GitBranch } from 'lucide-react';
+import { Download, Milestone, Layers, Image as ImageIcon, FileText, Route, GitBranch, Spline } from 'lucide-react';
 import { useStore } from '../store';
 import { buildTopsCsv } from '../export/tops';
 import { buildLithologyCsv } from '../export/lithology';
 import { buildDevFile } from '../export/dev';
 import { buildFaultsCsv } from '../export/faults';
+import { buildSectionsCsv } from '../export/sections';
 import { exportCorrelationPng, exportCorrelationJpeg } from '../export/image';
 import { jpegToPdf } from '../export/pdf';
 import { downloadText, triggerDownload } from '../export/download';
@@ -23,6 +24,7 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
   const wells = useStore((s) => s.wells);
   const markers = useStore((s) => s.markers);
   const faults = useStore((s) => s.faults);
+  const sections = useStore((s) => s.sections);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -49,6 +51,11 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
 
   const exportFaultsCsv = () => {
     downloadText(`faults-${stamp()}.csv`, buildFaultsCsv(faults, markers));
+    setOpen(false);
+  };
+
+  const exportSectionsCsv = () => {
+    downloadText(`sections-${stamp()}.csv`, buildSectionsCsv(sections));
     setOpen(false);
   };
 
@@ -92,6 +99,9 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
           </button>
           <button className="menu-item" onClick={exportFaultsCsv} disabled={faults.length === 0}>
             <GitBranch size={15} strokeWidth={1.75} /> Разломы (CSV)
+          </button>
+          <button className="menu-item" onClick={exportSectionsCsv} disabled={sections.length === 0}>
+            <Spline size={15} strokeWidth={1.75} /> Линии разреза (CSV)
           </button>
           <button className="menu-item" onClick={exportDev} disabled={coordWells.length === 0} title="Petrel-совместимый .dev на каждую скважину с координатами">
             <Route size={15} strokeWidth={1.75} /> Траектории (.dev)
