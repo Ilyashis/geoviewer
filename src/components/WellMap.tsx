@@ -77,6 +77,10 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [mode, setMode] = useState<Mode>('structure');
+  // The surface-picker tab needs a mappable пласт to mean anything; when
+  // there isn't one yet, "Разрезы" is the only tab with content, regardless
+  // of which one the user last had open.
+  const [panelTab, setPanelTab] = useState<'surface' | 'faults' | 'sections'>('surface');
   const [surfaceId, setSurfaceId] = useState<string | null>(null);
   const [topId, setTopId] = useState<string | null>(null);
   const [baseId, setBaseId] = useState<string | null>(null);
@@ -644,6 +648,7 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
     );
   }
 
+  const activeTab = mappable.length > 0 ? panelTab : 'sections';
   const pts = layout?.pts ?? [];
   const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`).join(' ');
 
@@ -756,115 +761,138 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
       </g>
       </svg>
 
-      {mappable.length > 0 && (
-        <div className="map-panel">
-          <div className="map-mode">
-            <button className={`map-mode-btn ${mode === 'structure' ? 'on' : ''}`} onClick={() => setMode('structure')}>Структура</button>
-            <button className={`map-mode-btn ${mode === 'isochore' ? 'on' : ''}`} onClick={() => setMode('isochore')}
-              disabled={mappable.length < 2}>Изохора</button>
-          </div>
-          {mode === 'structure' ? (
-            <>
-              <SurfacePicker label="Пласт" options={surfOptions} value={surface?.id} onChange={setSurfaceId} />
-              <button className="map-export-btn" disabled={!grid} onClick={exportZmap} title="Экспорт грида в формате Petrel (ZMAP+)">
-                <Download size={13} strokeWidth={1.75} /> Грид (ZMAP+)
-              </button>
-            </>
-          ) : (
-            <>
-              <SurfacePicker label="Кровля" options={surfOptions} value={top?.id} onChange={setTopId} />
-              <SurfacePicker label="Подошва" options={surfOptions} value={base?.id} onChange={setBaseId} />
-            </>
-          )}
-        </div>
-      )}
-
       {/* Разлому нужны пласты, чтобы было что сечь; разрезу — только координаты
-          скважин, поэтому весь блок открыт по более слабому условию. */}
+          скважин. mappable > 0 implies !schematic && coordWells > 0 (mappable
+          is forced empty whenever schematic), so this one condition covers
+          "is there anything at all for this panel to show". Пласт/Разломы
+          tabs are gated on mappable the same way the old separate panels were. */}
       {!schematic && coordWells.length > 0 && (
-        <div className="map-fault-panel">
-          {mappable.length > 0 && (
-            <div className="map-fault-head">
-              <span>Разломы</span>
-              <button className="map-fault-add" disabled={drawingFault} onClick={startFaultDraw}>+ разлом</button>
-            </div>
-          )}
-          {mappable.length > 0 && drawingFault && (
-            <div className="map-fault-marker-pick">
-              <div className="map-fault-pick-h">
-                <span>Сечёт пласты</span>
-                <button className="map-fault-all"
-                  onClick={() => setDraftFaultMarkerIds(draftFaultMarkerIds.length === mappable.length ? [] : mappable.map((m) => m.id))}>
-                  {draftFaultMarkerIds.length === mappable.length ? 'снять все' : 'все'}
-                </button>
+        <div className="map-panel">
+          <div className="map-tabs">
+            {mappable.length > 0 && (
+              <button className={`map-tab-btn ${activeTab === 'surface' ? 'on' : ''}`} onClick={() => setPanelTab('surface')}>
+                Пласт
+              </button>
+            )}
+            {mappable.length > 0 && (
+              <button className={`map-tab-btn ${activeTab === 'faults' ? 'on' : ''}`} onClick={() => setPanelTab('faults')}>
+                Разломы{faults.length > 0 ? ` ${faults.length}` : ''}
+              </button>
+            )}
+            <button className={`map-tab-btn ${activeTab === 'sections' ? 'on' : ''}`} onClick={() => setPanelTab('sections')}>
+              Разрезы{sections.length > 0 ? ` ${sections.length}` : ''}
+            </button>
+          </div>
+
+          {activeTab === 'surface' && mappable.length > 0 && (
+            <>
+              <div className="map-mode">
+                <button className={`map-mode-btn ${mode === 'structure' ? 'on' : ''}`} onClick={() => setMode('structure')}>Структура</button>
+                <button className={`map-mode-btn ${mode === 'isochore' ? 'on' : ''}`} onClick={() => setMode('isochore')}
+                  disabled={mappable.length < 2}>Изохора</button>
               </div>
-              <div className="map-surf-row">
-                {mappable.map((m) => (
-                  <button key={m.id} className={`map-surf ${draftFaultMarkerIds.includes(m.id) ? 'on' : ''}`}
-                    onClick={() => toggleDraftMarker(m.id)}>
-                    <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
+              {mode === 'structure' ? (
+                <>
+                  <SurfacePicker label="Пласт" options={surfOptions} value={surface?.id} onChange={setSurfaceId} />
+                  <button className="map-export-btn" disabled={!grid} onClick={exportZmap} title="Экспорт грида в формате Petrel (ZMAP+)">
+                    <Download size={13} strokeWidth={1.75} /> Грид (ZMAP+)
                   </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {mappable.length === 0 && faults.length === 0 ? null : faults.length === 0 ? (
-            <div className="map-fault-empty">Нет разломов</div>
-          ) : (
-            faults.map((f) => {
-              const t = throwAtView(f);
-              const cut = mappable.filter((m) => f.markerIds.includes(m.id));
-              const isActive = activeFaults.some((af) => af.id === f.id);
-              const cutLabel = cut.length === mappable.length ? 'все' : cut.map((m) => m.label).join(', ');
-              // Per-пласт throws, so the numbers behind a single displayed value stay inspectable.
-              const perMarker = cut
-                .map((m) => `${m.label}: ${faultThrows[f.id]?.[m.id] == null ? '—' : `${Math.round(Math.abs(faultThrows[f.id][m.id]!))} м`}`)
-                .join('\n');
-              return (
-                <div key={f.id} className={`map-fault-row ${isActive ? '' : 'inactive'}`}
-                  title={`${f.label} · сечёт: ${cutLabel}\n${perMarker}${isActive ? '' : '\n\n(не влияет на текущий вид)'}`}>
-                  <span className="map-fault-dot" />
-                  <span className="map-fault-label">{f.label} · {cutLabel}</span>
-                  <span className="map-fault-throw">{t == null ? '—' : `${Math.round(Math.abs(t))} м`}</span>
-                  <input
-                    className="map-fault-dip" type="number" min={1} max={89} placeholder="90°"
-                    title="Угол падения, ° от горизонтали — не вычисляется из пикетов, вводится вручную"
-                    value={f.dip ?? ''}
-                    onChange={(e) => {
-                      const v = e.target.value === '' ? undefined : Math.max(1, Math.min(89, Number(e.target.value)));
-                      setFaultDip(f.id, Number.isFinite(v as number) ? v : undefined);
-                    }}
-                  />
-                  <button className="map-fault-del" title="Удалить разлом" onClick={() => confirm({
-                    title: `Удалить «${f.label}»?`,
-                    message: 'Трасса, угол падения и привязка к пластам этого разлома будут удалены без возможности восстановления.',
-                    onConfirm: () => removeFault(f.id),
-                  })}>×</button>
-                </div>
-              );
-            })
+                </>
+              ) : (
+                <>
+                  <SurfacePicker label="Кровля" options={surfOptions} value={top?.id} onChange={setTopId} />
+                  <SurfacePicker label="Подошва" options={surfOptions} value={base?.id} onChange={setBaseId} />
+                </>
+              )}
+            </>
           )}
 
-          {/* Тот же плавающий блок, что и разломы: у него уже есть предел
-              высоты и своя прокрутка — второй угол под это заводить не нужно. */}
-          <div className="map-fault-head map-section-head">
-            <span>Разрезы</span>
-            <button className="map-fault-add" disabled={drawingSection} onClick={startSectionDraw}>+ разрез</button>
-          </div>
-          {sections.length === 0 ? (
-            <div className="map-fault-empty">Нет линий разреза</div>
-          ) : (
-            sections.map((s) => (
-              <div key={s.id} className="map-fault-row" title={`${s.label} · ${s.points.length} точек`}>
-                <span className="map-section-dot" />
-                <span className="map-fault-label">{s.label}</span>
-                <button className="map-fault-del" title="Удалить разрез" onClick={() => confirm({
-                  title: `Удалить «${s.label}»?`,
-                  message: 'Линия разреза будет удалена без возможности восстановления.',
-                  onConfirm: () => removeSection(s.id),
-                })}>×</button>
+          {activeTab === 'faults' && mappable.length > 0 && (
+            <>
+              <div className="map-fault-head">
+                <span>Разломы</span>
+                <button className="map-fault-add" disabled={drawingFault} onClick={startFaultDraw}>+ разлом</button>
               </div>
-            ))
+              {drawingFault && (
+                <div className="map-fault-marker-pick">
+                  <div className="map-fault-pick-h">
+                    <span>Сечёт пласты</span>
+                    <button className="map-fault-all"
+                      onClick={() => setDraftFaultMarkerIds(draftFaultMarkerIds.length === mappable.length ? [] : mappable.map((m) => m.id))}>
+                      {draftFaultMarkerIds.length === mappable.length ? 'снять все' : 'все'}
+                    </button>
+                  </div>
+                  <div className="map-surf-row">
+                    {mappable.map((m) => (
+                      <button key={m.id} className={`map-surf ${draftFaultMarkerIds.includes(m.id) ? 'on' : ''}`}
+                        onClick={() => toggleDraftMarker(m.id)}>
+                        <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {faults.length === 0 ? (
+                <div className="map-fault-empty">Нет разломов</div>
+              ) : (
+                faults.map((f) => {
+                  const t = throwAtView(f);
+                  const cut = mappable.filter((m) => f.markerIds.includes(m.id));
+                  const isActive = activeFaults.some((af) => af.id === f.id);
+                  const cutLabel = cut.length === mappable.length ? 'все' : cut.map((m) => m.label).join(', ');
+                  // Per-пласт throws, so the numbers behind a single displayed value stay inspectable.
+                  const perMarker = cut
+                    .map((m) => `${m.label}: ${faultThrows[f.id]?.[m.id] == null ? '—' : `${Math.round(Math.abs(faultThrows[f.id][m.id]!))} м`}`)
+                    .join('\n');
+                  return (
+                    <div key={f.id} className={`map-fault-row ${isActive ? '' : 'inactive'}`}
+                      title={`${f.label} · сечёт: ${cutLabel}\n${perMarker}${isActive ? '' : '\n\n(не влияет на текущий вид)'}`}>
+                      <span className="map-fault-dot" />
+                      <span className="map-fault-label">{f.label} · {cutLabel}</span>
+                      <span className="map-fault-throw">{t == null ? '—' : `${Math.round(Math.abs(t))} м`}</span>
+                      <input
+                        className="map-fault-dip" type="number" min={1} max={89} placeholder="90°"
+                        title="Угол падения, ° от горизонтали — не вычисляется из пикетов, вводится вручную"
+                        value={f.dip ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value === '' ? undefined : Math.max(1, Math.min(89, Number(e.target.value)));
+                          setFaultDip(f.id, Number.isFinite(v as number) ? v : undefined);
+                        }}
+                      />
+                      <button className="map-fault-del" title="Удалить разлом" onClick={() => confirm({
+                        title: `Удалить «${f.label}»?`,
+                        message: 'Трасса, угол падения и привязка к пластам этого разлома будут удалены без возможности восстановления.',
+                        onConfirm: () => removeFault(f.id),
+                      })}>×</button>
+                    </div>
+                  );
+                })
+              )}
+            </>
+          )}
+
+          {activeTab === 'sections' && (
+            <>
+              <div className="map-fault-head">
+                <span>Разрезы</span>
+                <button className="map-fault-add" disabled={drawingSection} onClick={startSectionDraw}>+ разрез</button>
+              </div>
+              {sections.length === 0 ? (
+                <div className="map-fault-empty">Нет линий разреза</div>
+              ) : (
+                sections.map((s) => (
+                  <div key={s.id} className="map-fault-row" title={`${s.label} · ${s.points.length} точек`}>
+                    <span className="map-section-dot" />
+                    <span className="map-fault-label">{s.label}</span>
+                    <button className="map-fault-del" title="Удалить разрез" onClick={() => confirm({
+                      title: `Удалить «${s.label}»?`,
+                      message: 'Линия разреза будет удалена без возможности восстановления.',
+                      onConfirm: () => removeSection(s.id),
+                    })}>×</button>
+                  </div>
+                ))
+              )}
+            </>
           )}
         </div>
       )}

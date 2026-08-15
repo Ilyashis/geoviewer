@@ -548,6 +548,16 @@ body {
 }
 .map-export-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent, #4dabf7); }
 .map-export-btn:disabled { color: var(--text-3); cursor: not-allowed; }
+/* Пласт/Разломы/Разрезы used to be two separate floating panels (one per
+   corner) — one tab strip in one panel keeps the map's footprint from
+   growing with the number of faults or section lines. */
+.map-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--hairline); margin-bottom: 2px; }
+.map-tab-btn {
+  background: none; border: 0; color: var(--text-3); font-size: 12px; padding: 5px 8px 8px;
+  cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.map-tab-btn:hover { color: var(--text-2); }
+.map-tab-btn.on { color: var(--text); border-bottom-color: var(--accent); }
 .map-mode { display: inline-flex; gap: 4px; background: var(--canvas); border: 1px solid var(--border); border-radius: 100px; padding: 3px; width: fit-content; }
 .map-mode-btn { background: none; border: 0; color: var(--text-2); font-size: 12px; padding: 4px 12px; border-radius: 100px; cursor: pointer; }
 .map-mode-btn:hover:not(:disabled) { color: var(--text); }
@@ -854,11 +864,6 @@ body {
 .map-fault-vertex { fill: var(--warn, #ff9f0a); stroke: #fff; stroke-width: 1.5; cursor: grab; }
 .map-fault-vertex:active { cursor: grabbing; }
 
-.map-fault-panel {
-  position: absolute; bottom: 16px; right: 18px; width: 200px; max-height: 40%; overflow-y: auto;
-  background: rgba(27, 33, 39, 0.9); backdrop-filter: blur(10px);
-  border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px 12px;
-}
 .map-fault-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .map-fault-head span { font-size: 11px; font-family: var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
 .map-fault-add {
@@ -889,10 +894,8 @@ body {
 }
 .map-fault-del:hover { color: var(--danger); }
 
-/* Разрезы делят панель с разломами (см. map-fault-panel) — своя палитра
-   (--accent-2, как у линий девиации/сейсмопривязки), чтобь не путать с оранжевым
-   разлома, plus a divider above when both lists are present. */
-.map-section-head { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--hairline); }
+/* Разрезы — своя палитра (--accent-2, как у линий девиации/сейсмопривязки),
+   чтобы не путать с оранжевым разлома. */
 .map-section-line { stroke: var(--accent-2); stroke-width: 2.5; }
 .map-section-line.draft { stroke-dasharray: 4 4; opacity: 0.8; }
 .map-section-vertex { fill: var(--accent-2); stroke: #fff; stroke-width: 1.5; cursor: grab; }
