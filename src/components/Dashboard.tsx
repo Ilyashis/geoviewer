@@ -25,7 +25,7 @@ function finiteExtent(wells: Well[]): [number, number] | null {
   return min <= max ? [min, max] : null;
 }
 
-type DataKind = 'wells' | 'markers' | 'checkshots' | 'segy' | 'faults' | 'sections' | 'horizons';
+type DataKind = 'wells' | 'markers' | 'checkshots' | 'segy' | 'volumes' | 'faults' | 'sections' | 'horizons';
 
 /** Project summary: stat tiles, lithology composition, mistie spread, and
  * every other object type in the project — one table, switched by tab,
@@ -35,6 +35,7 @@ type DataKind = 'wells' | 'markers' | 'checkshots' | 'segy' | 'faults' | 'sectio
 export function Dashboard({ projectName, wells, markers, onActivateWell, onSelectMarker, onShow }: Props) {
   const checkshots = useStore((s) => s.checkshots);
   const segyLines = useStore((s) => s.segyLines);
+  const segyVolumes = useStore((s) => s.segyVolumes);
   const faults = useStore((s) => s.faults);
   const sections = useStore((s) => s.sections);
   const seismicHorizons = useStore((s) => s.seismicHorizons);
@@ -81,6 +82,7 @@ export function Dashboard({ projectName, wells, markers, onActivateWell, onSelec
     { key: 'markers', label: 'Разбивки', count: markers.length },
     { key: 'checkshots', label: 'Чекшоты', count: checkshots.length },
     { key: 'segy', label: 'SEG-Y', count: segyLines.length },
+    { key: 'volumes', label: 'Кубы', count: segyVolumes.length },
     { key: 'faults', label: 'Разломы', count: faults.length },
     { key: 'sections', label: 'Разрезы', count: sections.length },
     { key: 'horizons', label: 'Сейсмогоризонты', count: horizonRows.length },
@@ -238,6 +240,25 @@ export function Dashboard({ projectName, wells, markers, onActivateWell, onSelec
                       <td className="num">{l.traceCount}</td>
                       <td className={l.tie ? '' : 'warn'}>{l.tie ? 'привязана' : 'не привязана'}</td>
                       <td><ShowBtn onClick={() => onShow('seismic', { target: 'seismicLine', id: l.id })} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {kind === 'volumes' && (
+            segyVolumes.length === 0 ? <div className="dash-table-empty">нет</div> : (
+              <table className="dash-table">
+                <thead><tr><th>Куб</th><th>Инлайнов</th><th>Кросслайнов</th><th>Отсчётов</th><th /></tr></thead>
+                <tbody>
+                  {segyVolumes.map((v) => (
+                    <tr key={v.id}>
+                      <td className="mono">{v.label}</td>
+                      <td className="num">{v.nInline}</td>
+                      <td className="num">{v.nCrossline}</td>
+                      <td className="num">{v.nSamples}</td>
+                      <td><ShowBtn onClick={() => onShow('seismic')} /></td>
                     </tr>
                   ))}
                 </tbody>

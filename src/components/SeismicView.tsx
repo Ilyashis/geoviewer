@@ -5,6 +5,8 @@ import {
   sampleNodes, interpolateHorizon, tieToWells, sampleHorizonAt, EARTH,
   type HorizonNode, type FieldSection,
 } from '../seismic';
+import { seismicColor, buildSeismicRaster } from '../seismic/raster';
+import { SeismicVolumeView } from './SeismicVolumeView';
 import { SurfacePicker } from './SurfacePicker';
 import { buildSurface } from '../core/framework';
 import { metricWells } from '../wells/coords';
@@ -41,12 +43,6 @@ const CONV_PRESETS: Record<'const' | 'linear', VelocityModel> = { const: DEFAULT
 const niceStep = (raw: number) => { const p = Math.pow(10, Math.floor(Math.log10(raw))); const n = raw / p; return (n >= 5 ? 5 : n >= 2 ? 2 : 1) * p; };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
-/** Dark variable-density seismic: near-black at zero, red for +, cyan-blue for −. */
-function seismicColor(v: number): [number, number, number] {
-  const a = Math.min(1, Math.abs(v));
-  return v >= 0 ? [30 + 225 * a, 34 + 36 * a, 34] : [30, 44 + 120 * a, 44 + 211 * a];
-}
-
 /**
  * 2D seismic: two independent lines (W→E and S→N) through the same wells, each
  * with its own editable horizon pick. Where the lines physically cross, a picked
@@ -78,6 +74,8 @@ export function SeismicView({ wells, markers }: Props) {
   const [tieDraft, setTieDraft] = useState<{ f: number; mapX: string; mapY: string }[]>([]);
   const checkshots = useStore((s) => s.checkshots);
   const segyLines = useStore((s) => s.segyLines);
+  const segyVolumes = useStore((s) => s.segyVolumes);
+  const [seismicMode, setSeismicMode] = useState<'lines' | 'volume'>('lines');
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   const setSeismicHorizon = useStore((s) => s.setSeismicHorizon);
   const clearSeismicHorizon = useStore((s) => s.clearSeismicHorizon);
@@ -481,24 +479,7 @@ export function SeismicView({ wells, markers }: Props) {
     if (dragRef.current != null) { canvasRef.current!.releasePointerCapture(e.pointerId); dragRef.current = null; }
   };
 
-  const image = useMemo(() => {
-    if (!field) return null;
-    const { nTraces, nSamples, amp, ampMax } = field.section;
-    const off = document.createElement('canvas');
-    off.width = nTraces; off.height = nSamples;
-    const octx = off.getContext('2d');
-    if (!octx) return null;
-    const img = octx.createImageData(nTraces, nSamples);
-    for (let i = 0; i < nTraces; i++) {
-      for (let s = 0; s < nSamples; s++) {
-        const [r, g, b] = seismicColor(amp[i * nSamples + s] / ampMax);
-        const p = (s * nTraces + i) * 4;
-        img.data[p] = r; img.data[p + 1] = g; img.data[p + 2] = b; img.data[p + 3] = 255;
-      }
-    }
-    octx.putImageData(img, 0, 0);
-    return off;
-  }, [field]);
+  const image = useMemo(() => (field ? buildSeismicRaster(field.section) : null), [field]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -668,16 +649,32 @@ export function SeismicView({ wells, markers }: Props) {
     ctx.fillStyle = text3; ctx.textAlign = 'center'; ctx.fillText('амплитуда −/+', lx + lw / 2, ly - 5);
   }, [field, image, size, geom, edit, horizonTwt, crossing, lineId, faultCrossings, conv, faultPicks, isImported, tieDraft]);
 
+  // Volumes are entirely well/line-independent (own FieldSection-free path),
+  // so this mode is reachable even when there's nothing for the 2D side to
+  // show — the placeholders below only ever apply to 'lines' mode.
+  const modeBar = segyVolumes.length > 0 ? (
+    <div className="seismic-mode-bar">
+      <button className={`seismic-mode-btn ${seismicMode === 'lines' ? 'on' : ''}`} onClick={() => setSeismicMode('lines')}>Линии</button>
+      <button className={`seismic-mode-btn ${seismicMode === 'volume' ? 'on' : ''}`} onClick={() => setSeismicMode('volume')}>Куб</button>
+    </div>
+  ) : null;
+
+  if (seismicMode === 'volume' && segyVolumes.length > 0) {
+    return <>{modeBar}<SeismicVolumeView /></>;
+  }
+
   if (wells.length === 0 && segyLines.length === 0) {
-    return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Загрузите скважины — здесь появится синтетический сейсмо-разрез вдоль линии скважин с привязкой кровель. Либо импортируйте SEG-Y (.segy/.sgy) — интерпретировать его можно и без единой скважины.</p></div></div>;
+    return <>{modeBar}<div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Загрузите скважины — здесь появится синтетический сейсмо-разрез вдоль линии скважин с привязкой кровель. Либо импортируйте SEG-Y (.segy/.sgy) — интерпретировать его можно и без единой скважины.</p></div></div></>;
   }
   if (!field) {
-    return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Нужны ≥2 скважины с координатами, чтобы построить линию разреза, либо импортированная SEG-Y линия.</p></div></div>;
+    return <>{modeBar}<div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Нужны ≥2 скважины с координатами, чтобы построить линию разреза, либо импортированная SEG-Y линия.</p></div></div></>;
   }
 
   const inMap = edit ? !!seismicHorizons[edit.label]?.[lineId] : false;
 
   return (
+    <>
+      {modeBar}
     <div className="seismic" ref={wrapRef}>
       <canvas ref={canvasRef} className="seismic-canvas" style={{ width: size.w, height: size.h }}
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} />
@@ -848,5 +845,6 @@ export function SeismicView({ wells, markers }: Props) {
         )}
       </div>
     </div>
+    </>
   );
 }

@@ -3,7 +3,7 @@ import type { Marker, Well } from '../../types';
 import type { ProjectMeta } from '../../persistence';
 import type { ControlPoint } from '../../core/framework';
 import type { WellCheckshot } from '../../wells/checkshot';
-import type { SegyLine } from '../../seismic/segy';
+import type { SegyLine, SeismicVolume } from '../../seismic/segy';
 import type { Store } from '../types';
 import type { FaultDef, SectionLine } from './framework';
 
@@ -20,6 +20,7 @@ export interface ProjectSlice {
     sections?: SectionLine[];
     checkshots?: WellCheckshot[];
     segyLines?: SegyLine[];
+    segyVolumes?: SeismicVolume[];
     seismicHorizons?: Record<string, Record<string, ControlPoint[]>>;
   }) => void;
   clearAll: () => void;
@@ -45,6 +46,7 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
       sections: p.sections ?? [],
       checkshots: p.checkshots ?? [],
       segyLines: p.segyLines ?? [],
+      segyVolumes: p.segyVolumes ?? [],
       seismicHorizons: p.seismicHorizons ?? {},
       selectedMarkerId: null,
       error: null,
@@ -60,6 +62,7 @@ export const createProjectSlice: StateCreator<Store, [], [], ProjectSlice> = (se
       sections: [],
       checkshots: [],
       segyLines: [],
+      segyVolumes: [],
       seismicHorizons: {},
       selectedMarkerId: null,
       error: null,

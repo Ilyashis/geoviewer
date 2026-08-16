@@ -1,7 +1,7 @@
 import type { Marker, Well } from './types';
 import type { FaultDef, SectionLine } from './store/slices/framework';
 import type { WellCheckshot } from './wells/checkshot';
-import type { SegyLine } from './seismic/segy';
+import type { SegyLine, SeismicVolume } from './seismic/segy';
 import type { ControlPoint } from './core/framework';
 import { uid } from './util/id';
 
@@ -36,6 +36,7 @@ export interface ProjectData {
   sections?: SectionLine[];
   checkshots?: WellCheckshot[];
   segyLines?: SegyLine[];
+  segyVolumes?: SeismicVolume[];
   seismicHorizons?: Record<string, Record<string, ControlPoint[]>>;
 }
 

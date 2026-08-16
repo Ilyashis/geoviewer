@@ -5,7 +5,7 @@ import type { SurveyRow } from '../../survey/csv';
 import type { WellHeadRow } from '../../wells/heads';
 import { parseDev, type ParsedDev } from '../../wells/dev';
 import { parseCheckshots } from '../../wells/checkshot';
-import { segyToLine } from '../../seismic/segy';
+import { segyToLine, segyToVolume, scanSegyHeaders, isSegyVolume } from '../../seismic/segy';
 import { readTextFile } from '../../util/encoding';
 import type { SurveyStation } from '../../wells/deviation';
 import { parseLasToWell } from '../../las/parser';
@@ -104,10 +104,17 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
       if (parsed.length) get().setCheckshots(parsed);
     }
 
-    // SEG-Y lines — read as binary, shown as their own sections.
+    // SEG-Y — a cheap header-only scan first decides line vs. volume, since a
+    // full 3D survey and a 2D line need entirely different readers (segyToLine
+    // treats every trace as one line; a volume needs the inline/crossline grid).
     for (const file of all.filter(isSegy)) {
       try {
-        get().addSegyLine(segyToLine(await file.arrayBuffer(), file.name));
+        const buf = await file.arrayBuffer();
+        if (isSegyVolume(scanSegyHeaders(buf))) {
+          get().addSegyVolume(segyToVolume(buf, file.name));
+        } else {
+          get().addSegyLine(segyToLine(buf, file.name));
+        }
       } catch (e) {
         set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` });
       }

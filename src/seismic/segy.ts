@@ -131,7 +131,7 @@ function decodeTextHeader(bytes: Uint8Array): string {
   return out.trimEnd();
 }
 
-function readSamples(view: DataView, offset: number, ns: number, format: SegyFormat): Float32Array {
+export function readSamples(view: DataView, offset: number, ns: number, format: SegyFormat): Float32Array {
   const out = new Float32Array(ns);
   switch (format) {
     case 1: for (let i = 0; i < ns; i++) out[i] = ibmToFloat(view.getUint32(offset + i * 4)); break;
@@ -145,7 +145,21 @@ function readSamples(view: DataView, offset: number, ns: number, format: SegyFor
 
 const BYTES_PER_SAMPLE: Record<SegyFormat, number> = { 1: 4, 2: 4, 3: 2, 5: 4, 8: 1 };
 
-export function parseSegy(buffer: ArrayBuffer, opts: SegyOptions = {}): SegyFile {
+interface SegyLayout {
+  view: DataView;
+  text: string;
+  dt: number;
+  ns: number;
+  format: SegyFormat;
+  traceBytes: number;
+  dataStart: number;
+  count: number;
+}
+
+/** Binary-header parse + trace count, shared by the line and volume readers.
+ * `capTraces` is the 2D-line safety cap (`opts.maxTraces`) — the volume path
+ * doesn't want it, since a whole survey is exactly what it means to read. */
+function readSegyLayout(buffer: ArrayBuffer, capTraces?: number): SegyLayout {
   if (buffer.byteLength < TEXT_HEADER + BIN_HEADER) {
     throw new Error('Файл короче заголовков SEG-Y — это не SEG-Y.');
   }
@@ -166,22 +180,31 @@ export function parseSegy(buffer: ArrayBuffer, opts: SegyOptions = {}): SegyFile
   const traceBytes = TRACE_HEADER + ns * sampleBytes;
   const dataStart = TEXT_HEADER + BIN_HEADER;
   const available = Math.floor((buffer.byteLength - dataStart) / traceBytes);
-  const count = Math.min(available, opts.maxTraces ?? available);
+  const count = Math.min(available, capTraces ?? available);
 
-  // Pick the coordinate pair by looking at the data rather than trusting one
-  // convention: sample a few traces and take the pair that is actually filled.
+  return { view, text, dt, ns, format, traceBytes, dataStart, count };
+}
+
+/** Pick the coordinate pair by looking at the data rather than trusting one
+ * convention: sample a few traces and take the pair that is actually filled. */
+function pickCoordBytes(l: SegyLayout, opts: SegyOptions): { xByte: number; yByte: number } {
   const filled = (xb: number, yb: number) => {
-    const probes = Math.min(count, 8);
+    const probes = Math.min(l.count, 8);
     for (let t = 0; t < probes; t++) {
-      const h = dataStart + t * traceBytes;
-      if (view.getInt32(h + xb - 1) !== 0 || view.getInt32(h + yb - 1) !== 0) return true;
+      const h = l.dataStart + t * l.traceBytes;
+      if (l.view.getInt32(h + xb - 1) !== 0 || l.view.getInt32(h + yb - 1) !== 0) return true;
     }
     return false;
   };
   const explicit = opts.xByte !== undefined && opts.yByte !== undefined;
   const useCdpPair = explicit ? false : filled(181, 185);
-  const xByte = opts.xByte ?? (useCdpPair ? 181 : 73);
-  const yByte = opts.yByte ?? (useCdpPair ? 185 : 77);
+  return { xByte: opts.xByte ?? (useCdpPair ? 181 : 73), yByte: opts.yByte ?? (useCdpPair ? 185 : 77) };
+}
+
+export function parseSegy(buffer: ArrayBuffer, opts: SegyOptions = {}): SegyFile {
+  const l = readSegyLayout(buffer, opts.maxTraces);
+  const { view, dataStart, traceBytes, count, ns, format } = l;
+  const { xByte, yByte } = pickCoordBytes(l, opts);
 
   const traces: SegyTrace[] = [];
   for (let t = 0; t < count; t++) {
@@ -205,7 +228,54 @@ export function parseSegy(buffer: ArrayBuffer, opts: SegyOptions = {}): SegyFile
   // Delay recording time of the first sample (trace byte 109), milliseconds.
   const t0 = count > 0 ? view.getInt16(dataStart + 108) : 0;
 
-  return { text, format, dt, ns, t0, traces };
+  return { text: l.text, format, dt: l.dt, ns, t0, traces };
+}
+
+/** Trace-header-only pass (inline/crossline/coords, no amplitude payload) —
+ * cheap regardless of file size, so it's safe to run before deciding whether
+ * a file is a 2D line or a 3D volume, and before committing to the (much
+ * larger) full read a volume needs. */
+export interface SegyHeaderScan {
+  text: string;
+  dt: number;
+  ns: number;
+  format: SegyFormat;
+  count: number;
+  inline: Int32Array;
+  crossline: Int32Array;
+  x: Float64Array;
+  y: Float64Array;
+  /** Delay recording time of the first sample (trace byte 109), ms. */
+  t0: number;
+}
+
+export function scanSegyHeaders(buffer: ArrayBuffer, opts: SegyOptions = {}): SegyHeaderScan {
+  const l = readSegyLayout(buffer); // no maxTraces cap — scanning headers is cheap either way
+  const { view, dataStart, traceBytes, count } = l;
+  const { xByte, yByte } = pickCoordBytes(l, opts);
+
+  const inline = new Int32Array(count), crossline = new Int32Array(count);
+  const x = new Float64Array(count), y = new Float64Array(count);
+  for (let t = 0; t < count; t++) {
+    const h = dataStart + t * traceBytes;
+    const scalco = view.getInt16(h + 70);
+    const scale = scalco > 0 ? scalco : scalco < 0 ? 1 / -scalco : 1;
+    const rawX = view.getInt32(h + xByte - 1), rawY = view.getInt32(h + yByte - 1);
+    inline[t] = view.getInt32(h + 188);
+    crossline[t] = view.getInt32(h + 192);
+    x[t] = rawX === 0 ? NaN : rawX * scale;
+    y[t] = rawY === 0 ? NaN : rawY * scale;
+  }
+  const t0 = count > 0 ? view.getInt16(dataStart + 108) : 0;
+  return { text: l.text, dt: l.dt, ns: l.ns, format: l.format, count, inline, crossline, x, y, t0 };
+}
+
+/** A scan is a 3D volume, not a 2D line, when it carries more than one inline
+ * AND more than one crossline — a single line (any azimuth) is constant on
+ * whichever of the two isn't stepping along it. */
+export function isSegyVolume(scan: SegyHeaderScan): boolean {
+  const inlines = new Set(scan.inline), crosslines = new Set(scan.crossline);
+  return inlines.size > 1 && crosslines.size > 1;
 }
 
 /** An imported line, ready for the viewer. */
@@ -269,5 +339,98 @@ export function segyToLine(buffer: ArrayBuffer, fileName: string, opts: SegyOpti
     coords: f.traces.map((t) => ({ x: t.x, y: t.y })),
     text: f.text,
     traceCount: f.traces.length,
+  };
+}
+
+/** A 3D SEG-Y volume, read into a dense inline × crossline × sample grid. */
+export interface SeismicVolume {
+  id: string;
+  label: string;
+  nInline: number;
+  nCrossline: number;
+  nSamples: number;
+  /** Actual header inline/crossline numbers, ascending — index i maps to
+   * inlineNumbers[i], not to the raw header value itself. */
+  inlineNumbers: number[];
+  crosslineNumbers: number[];
+  /** Sample interval, ms. */
+  dt: number;
+  /** Time of the first sample, ms. */
+  t0: number;
+  /** Dense, inline-major: amp[(il * nCrossline + xl) * nSamples + s].
+   * Bins with no trace in the file are left at 0 — same "don't invent data"
+   * rule the map's IDW grid follows for cells outside its reach, not a
+   * special case for seismic. */
+  amp: Float32Array;
+  ampMax: number;
+  /** Per-(il, xl) trace coordinate, same bin layout as amp minus the sample
+   * axis; NaN where there's no trace for that bin. */
+  coordX: Float64Array;
+  coordY: Float64Array;
+  traceCount: number;
+  tie?: [TiePoint, TiePoint];
+}
+
+export interface VolumeOptions extends SegyOptions {
+  /** Amplitude-array byte ceiling — rejects rather than silently
+   * subsampling, since a quietly thinned cube reads as real data. Default
+   * 512 MiB, a size a browser tab can hold without much drama alongside
+   * everything else the project keeps in memory. */
+  maxBytes?: number;
+}
+
+const DEFAULT_MAX_VOLUME_BYTES = 512 * 1024 * 1024;
+
+/** Parse a file straight into a viewer-ready volume. Two passes: a cheap
+ * header-only scan first to size the grid and fail fast on an oversized
+ * cube, then the full amplitude read only once that's cleared. */
+export function segyToVolume(buffer: ArrayBuffer, fileName: string, opts: VolumeOptions = {}): SeismicVolume {
+  const scan = scanSegyHeaders(buffer, opts);
+  const inlineNumbers = [...new Set(scan.inline)].sort((a, b) => a - b);
+  const crosslineNumbers = [...new Set(scan.crossline)].sort((a, b) => a - b);
+  const nInline = inlineNumbers.length, nCrossline = crosslineNumbers.length, nSamples = scan.ns;
+
+  const bytes = nInline * nCrossline * nSamples * 4;
+  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_VOLUME_BYTES;
+  if (bytes > maxBytes) {
+    const mb = (n: number) => (n / (1024 * 1024)).toFixed(0);
+    throw new Error(
+      `Куб слишком большой для браузера: ${nInline}×${nCrossline} трасс × ${nSamples} отсчётов ≈ ${mb(bytes)} МБ ` +
+      `(лимит ${mb(maxBytes)} МБ). Экспортируйте под-куб меньшего размера или урежьте диапазон инлайнов/кросслайнов.`,
+    );
+  }
+
+  const ilIndex = new Map(inlineNumbers.map((n, i) => [n, i]));
+  const xlIndex = new Map(crosslineNumbers.map((n, i) => [n, i]));
+  const amp = new Float32Array(nInline * nCrossline * nSamples);
+  const coordX = new Float64Array(nInline * nCrossline).fill(NaN);
+  const coordY = new Float64Array(nInline * nCrossline).fill(NaN);
+  let ampMax = 0;
+
+  const l = readSegyLayout(buffer);
+  const { view, dataStart, traceBytes, count, format } = l;
+  for (let t = 0; t < count; t++) {
+    const il = ilIndex.get(scan.inline[t]), xl = xlIndex.get(scan.crossline[t]);
+    if (il === undefined || xl === undefined) continue;
+    const bin = il * nCrossline + xl;
+    coordX[bin] = scan.x[t];
+    coordY[bin] = scan.y[t];
+    const samples = readSamples(view, dataStart + t * traceBytes + TRACE_HEADER, nSamples, format);
+    amp.set(samples, bin * nSamples);
+    for (let s = 0; s < nSamples; s++) {
+      const a = Math.abs(samples[s]);
+      if (a > ampMax) ampMax = a;
+    }
+  }
+
+  return {
+    id: `segyvol-${fileName}-${nInline}x${nCrossline}`,
+    label: segyLabel(scan.text, fileName),
+    nInline, nCrossline, nSamples,
+    inlineNumbers, crosslineNumbers,
+    dt: scan.dt / 1000, t0: scan.t0,
+    amp, ampMax: ampMax || 1,
+    coordX, coordY,
+    traceCount: count,
   };
 }

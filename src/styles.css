@@ -681,6 +681,34 @@ body {
 .seismic { flex: 1; position: relative; overflow: hidden; background: var(--canvas); }
 .seismic-canvas { position: absolute; inset: 0; display: block; }
 
+/* Линии/Куб — only rendered once a volume exists, so it never appears for
+ * projects that only ever import 2D lines. Anchors against .body
+ * (position: relative), the nearest positioned ancestor once this and the
+ * seismic/volume view are painted as Fragment siblings, not nested. */
+.seismic-mode-bar {
+  position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 5;
+  display: inline-flex; gap: 4px; background: var(--canvas); border: 1px solid var(--border);
+  border-radius: 100px; padding: 3px;
+}
+.seismic-mode-btn { background: none; border: 0; color: var(--text-2); font-size: 12px; padding: 4px 12px; border-radius: 100px; cursor: pointer; }
+.seismic-mode-btn:hover { color: var(--text); }
+.seismic-mode-btn.on { color: var(--text); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--border); }
+
+/* ---------- Куб: inline/crossline срезы, просмотр без пикировки ---------- */
+.seismic-vol { flex: 1; position: relative; overflow: hidden; background: var(--canvas); }
+.seismic-vol-canvas { position: absolute; inset: 0; display: block; }
+.seismic-vol-panel { display: flex; flex-direction: column; gap: 10px; width: 220px; }
+.seismic-vol-select { background: var(--canvas); border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text-2); font-size: 12px; padding: 5px 8px; }
+.seismic-vol-axis { display: inline-flex; gap: 4px; background: var(--canvas); border: 1px solid var(--border); border-radius: 100px; padding: 3px; width: fit-content; }
+.seismic-vol-slider { display: flex; flex-direction: column; gap: 5px; }
+.seismic-vol-slider input[type="range"] { width: 100%; accent-color: var(--accent); }
+.seismic-vol-slider .mono { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); text-align: center; font-variant-numeric: tabular-nums; }
+.seismic-vol-info {
+  position: absolute; left: 18px; bottom: 14px; padding: 6px 12px; border-radius: var(--r-sm);
+  background: rgba(27, 33, 39, 0.85); backdrop-filter: blur(8px); border: 1px solid var(--border);
+  font-size: 11.5px; font-family: var(--mono); color: var(--text-2);
+}
+
 /* ---------- Разрез: одна линия, реальные межскважинные расстояния ---------- */
 .section { flex: 1; position: relative; overflow: hidden; background: var(--canvas); }
 .section-canvas { position: absolute; inset: 0; display: block; }

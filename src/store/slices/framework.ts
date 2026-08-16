@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand';
 import type { ControlPoint } from '../../core/framework';
 import type { WellCheckshot } from '../../wells/checkshot';
-import type { SegyLine } from '../../seismic/segy';
+import type { SegyLine, SeismicVolume } from '../../seismic/segy';
 import type { Pt } from '../../core/geom/polygon';
 import type { TiePoint } from '../../core/geom/similarity';
 import type { Store } from '../types';
@@ -57,6 +57,12 @@ export interface FrameworkSlice {
   addSegyLine: (line: SegyLine) => void;
   removeSegyLine: (id: string) => void;
   setSegyLineTie: (id: string, tie: [TiePoint, TiePoint] | undefined) => void;
+  /** Imported SEG-Y 3D volumes — view-only (inline/crossline slicing), a
+   * separate array from `segyLines` rather than a variant of it: a volume
+   * has no single `section` to show, only slices taken on demand. */
+  segyVolumes: SeismicVolume[];
+  addSegyVolume: (volume: SeismicVolume) => void;
+  removeSegyVolume: (id: string) => void;
   /**
    * Faults, held here rather than inside the map view: the views are mounted
    * one at a time, so state living in the map was silently discarded the
@@ -96,6 +102,10 @@ export const createFrameworkSlice: StateCreator<Store, [], [], FrameworkSlice> =
   removeSegyLine: (id) => set((s) => ({ segyLines: s.segyLines.filter((l) => l.id !== id) })),
   setSegyLineTie: (id, tie) =>
     set((s) => ({ segyLines: s.segyLines.map((l) => (l.id === id ? { ...l, tie } : l)) })),
+  segyVolumes: [],
+  addSegyVolume: (volume) =>
+    set((s) => ({ segyVolumes: [...s.segyVolumes.filter((v) => v.id !== volume.id), volume] })),
+  removeSegyVolume: (id) => set((s) => ({ segyVolumes: s.segyVolumes.filter((v) => v.id !== id) })),
   faults: [],
   setFaults: (faults) =>
     set((s) => ({ faults: typeof faults === 'function' ? faults(s.faults) : faults })),
