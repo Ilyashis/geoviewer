@@ -69,10 +69,8 @@ body {
 
 .brand { display: flex; align-items: center; }
 .brand .logo {
-  width: 32px; height: 32px; border-radius: 9px;
+  width: 32px; height: 32px;
   display: grid; place-items: center;
-  background: linear-gradient(140deg, var(--accent), var(--accent-2));
-  color: #001322;
 }
 
 .iconbtn {
