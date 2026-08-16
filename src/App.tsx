@@ -2,9 +2,10 @@ import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from '
 import {
   Layers, Share2, FolderOpen, MessageSquare,
   MousePointer2, Square, PenLine, Milestone, Type, Table as TableIcon,
-  Navigation, Spline, Upload, Database,
+  Navigation, Spline, Upload, Database, Radio,
 } from 'lucide-react';
 import { useStore } from './store';
+import { Logo } from './components/Logo';
 import { WellLogPlate, wellDepthExtent } from './components/WellLogPlate';
 import { CorrelationMarkers, RAIL_W } from './components/CorrelationMarkers';
 import { MarkerInspector } from './components/MarkerInspector';
@@ -110,6 +111,7 @@ export default function App() {
   const { confirm: confirmDestroy, dialog: destroyDialog } = useConfirm();
   const [focusedWellId, setFocusedWellId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const segyInputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<WellMapHandle>(null);
@@ -255,7 +257,7 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <div className="logo"><Layers size={17} strokeWidth={1.9} /></div>
+          <div className="logo"><Logo size={18} /></div>
         </div>
         <ProjectMenu
           name={projectName}
@@ -276,7 +278,7 @@ export default function App() {
         </nav>
 
         <div className="right">
-          <button className="iconbtn" title="Открыть LAS" onClick={() => inputRef.current?.click()}>
+          <button className="iconbtn" title="Открыть LAS / SEG-Y" onClick={() => inputRef.current?.click()}>
             <FolderOpen size={16} strokeWidth={1.75} />
           </button>
           <button className="iconbtn" title="Импорт из CSV: разбивки, литология, инклинометрия, устья" onClick={() => setShowImport(true)}>
@@ -345,7 +347,7 @@ export default function App() {
         ) : wells.length === 0 ? (
           <div className="empty">
             <div className="welcome">
-              <div className="welcome-logo"><Layers size={34} strokeWidth={1.4} /></div>
+              <div className="welcome-logo"><Logo size={34} /></div>
               <h2>GeoViewer</h2>
               <p className="welcome-sub">Каротаж, корреляция, структурные карты и подсчёт запасов — прямо в браузере.</p>
               <div className="welcome-cta">
@@ -355,6 +357,10 @@ export default function App() {
                 <button className="btn ghost" onClick={() => inputRef.current?.click()}>
                   <Upload size={15} strokeWidth={1.75} /> Загрузить .las
                 </button>
+                <button className="btn ghost" title="Интерпретировать сейсмику можно и без единой скважины"
+                  onClick={() => segyInputRef.current?.click()}>
+                  <Radio size={15} strokeWidth={1.75} /> Импортировать SEG-Y
+                </button>
               </div>
               <div className="welcome-feats">
                 <div className="welcome-feat"><Layers size={18} strokeWidth={1.6} /><b>Корреляция</b><span>разбивки, литология, привязка</span></div>
@@ -362,6 +368,11 @@ export default function App() {
                 <div className="welcome-feat"><Spline size={18} strokeWidth={1.6} /><b>Кроссплоты</b><span>φ–ρ, GR–R, гистограммы</span></div>
               </div>
               <p className="welcome-hint">Перетащите .las сюда · CSV разбивки / литология / инклинометрия — через импорт <Milestone size={12} strokeWidth={1.75} /></p>
+              <input ref={segyInputRef} type="file" accept=".segy,.sgy" multiple hidden
+                onChange={async (e) => {
+                  if (e.target.files) { await addLasFiles(e.target.files); setTab('seismic'); }
+                  e.target.value = '';
+                }} />
             </div>
           </div>
         ) : (

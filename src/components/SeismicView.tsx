@@ -202,6 +202,15 @@ export function SeismicView({ wells, markers }: Props) {
       setFocusRequest(null);
     }
   }, [focusRequest, setFocusRequest]);
+  // No wells yet, but an imported line exists — the default 'A'/'B' synthetic
+  // lines are unusable (no wells to build them from), so land on the import
+  // instead of a dead "need coordinates" placeholder. Only kicks in while
+  // still on a synthetic id, so it never overrides a deliberate selection.
+  useEffect(() => {
+    if (wells.length === 0 && segyLines.length > 0 && (lineId === 'A' || lineId === 'B')) {
+      setLineId(segyLines[0].id);
+    }
+  }, [wells.length, segyLines, lineId]);
 
   // Plot geometry — shared by the draw effect and the pointer handlers.
   const geom = useMemo(() => {
@@ -659,11 +668,11 @@ export function SeismicView({ wells, markers }: Props) {
     ctx.fillStyle = text3; ctx.textAlign = 'center'; ctx.fillText('амплитуда −/+', lx + lw / 2, ly - 5);
   }, [field, image, size, geom, edit, horizonTwt, crossing, lineId, faultCrossings, conv, faultPicks, isImported, tieDraft]);
 
-  if (wells.length === 0) {
-    return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Загрузите скважины — здесь появится синтетический сейсмо-разрез вдоль линии скважин с привязкой кровель.</p></div></div>;
+  if (wells.length === 0 && segyLines.length === 0) {
+    return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Загрузите скважины — здесь появится синтетический сейсмо-разрез вдоль линии скважин с привязкой кровель. Либо импортируйте SEG-Y (.segy/.sgy) — интерпретировать его можно и без единой скважины.</p></div></div>;
   }
   if (!field) {
-    return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Нужны ≥2 скважины с координатами, чтобы построить линию разреза.</p></div></div>;
+    return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Нужны ≥2 скважины с координатами, чтобы построить линию разреза, либо импортированная SEG-Y линия.</p></div></div>;
   }
 
   const inMap = edit ? !!seismicHorizons[edit.label]?.[lineId] : false;
