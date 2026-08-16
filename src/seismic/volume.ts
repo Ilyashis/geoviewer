@@ -30,3 +30,29 @@ function slice(v: SeismicVolume, axis: 'inline' | 'crossline', index: number): V
 
 export const sliceInline = (v: SeismicVolume, ilIndex: number): VolumeSlice => slice(v, 'inline', ilIndex);
 export const sliceCrossline = (v: SeismicVolume, xlIndex: number): VolumeSlice => slice(v, 'crossline', xlIndex);
+
+/** A constant-TWT cut across every inline/crossline at once — an areal map,
+ * not a vertical section, so it isn't a `SeismicSection` at all (there's no
+ * sample axis left once time is the fixed one). Complements inline/crossline
+ * rather than being "the same slice a third way": a vertical section shows
+ * structure with depth at one position, a time slice shows a horizon's or
+ * fault's areal extent at one instant — different questions. */
+export interface TimeSlice {
+  nInline: number;
+  nCrossline: number;
+  /** Inline-major: amp[il * nCrossline + xl]. */
+  amp: Float32Array;
+  ampMax: number;
+  /** The TWT this slice sits at, ms. */
+  twt: number;
+}
+
+export function sliceTime(v: SeismicVolume, sampleIndex: number): TimeSlice {
+  if (!(sampleIndex >= 0 && sampleIndex < v.nSamples)) {
+    throw new Error(`Индекс отсчёта вне диапазона: ${sampleIndex} (0..${v.nSamples - 1})`);
+  }
+  const { nInline, nCrossline, nSamples } = v;
+  const amp = new Float32Array(nInline * nCrossline);
+  for (let bin = 0; bin < nInline * nCrossline; bin++) amp[bin] = v.amp[bin * nSamples + sampleIndex];
+  return { nInline, nCrossline, amp, ampMax: v.ampMax, twt: v.t0 + sampleIndex * v.dt };
+}

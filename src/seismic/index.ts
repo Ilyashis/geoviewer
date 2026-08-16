@@ -6,6 +6,6 @@ export { autoTrackHorizon, horizonControls, pointOnLine, sampleNodes, interpolat
 export type { HorizonNode } from './horizon';
 export { parseSegy, segyToSection, segyToLine, segyLabel, ibmToFloat, scanSegyHeaders, isSegyVolume, segyToVolume } from './segy';
 export type { SegyFile, SegyTrace, SegyLine, SegyFormat, SegyOptions, SegyHeaderScan, SeismicVolume, VolumeOptions } from './segy';
-export { sliceInline, sliceCrossline } from './volume';
-export type { VolumeSlice } from './volume';
-export { seismicColor, buildSeismicRaster } from './raster';
+export { sliceInline, sliceCrossline, sliceTime } from './volume';
+export type { VolumeSlice, TimeSlice } from './volume';
+export { seismicColor, buildSeismicRaster, buildTimeSliceRaster } from './raster';

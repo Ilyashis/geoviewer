@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sliceInline, sliceCrossline } from './volume';
+import { sliceInline, sliceCrossline, sliceTime } from './volume';
 import type { SeismicVolume } from './segy';
 
 /** 2 inlines × 3 crosslines × 2 samples — amp[bin*2] = il*100 + xl identifies
@@ -61,5 +61,32 @@ describe('sliceCrossline', () => {
 
   it('rejects an out-of-range index', () => {
     expect(() => sliceCrossline(buildVolume(), 3)).toThrow(/кросслайна/);
+  });
+});
+
+describe('sliceTime', () => {
+  it('extracts one areal (inline × crossline) map at a fixed sample', () => {
+    const s = sliceTime(buildVolume(), 0); // sample 0 → amp[bin*2] = il*100+xl
+    expect(s.nInline).toBe(2); expect(s.nCrossline).toBe(3);
+    expect([...s.amp]).toEqual([0, 1, 2, 100, 101, 102]); // inline-major, same bin order as the volume
+  });
+
+  it('reads the other sample plane independently', () => {
+    const s = sliceTime(buildVolume(), 1); // sample 1 → amp[bin*2+1] = -(il*100+xl)
+    expect([...s.amp]).toEqual([-0, -1, -2, -100, -101, -102]);
+  });
+
+  it('reports the actual TWT the slice sits at, from t0 and dt', () => {
+    const v = { ...buildVolume(), t0: 10, dt: 4 };
+    expect(sliceTime(v, 1).twt).toBe(10 + 4 * 1);
+  });
+
+  it('carries the volume-wide ampMax, same as the vertical slices', () => {
+    expect(sliceTime(buildVolume(), 0).ampMax).toBe(201);
+  });
+
+  it('rejects an out-of-range sample index', () => {
+    expect(() => sliceTime(buildVolume(), 2)).toThrow(/отсчёта/);
+    expect(() => sliceTime(buildVolume(), -1)).toThrow(/отсчёта/);
   });
 });
