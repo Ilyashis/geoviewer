@@ -2,7 +2,7 @@ import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from '
 import {
   Layers, Share2, FolderOpen, MessageSquare,
   MousePointer2, Square, PenLine, Milestone, Type, Table as TableIcon,
-  Navigation, Spline, Upload, Database, Radio,
+  Navigation, Spline, Upload, Radio,
 } from 'lucide-react';
 import { useStore } from './store';
 import { Logo } from './components/Logo';
@@ -19,7 +19,6 @@ import { ReservesSummary } from './components/ReservesSummary';
 import { CrossplotView, type CrossplotHandle } from './components/CrossplotView';
 import { SeismicView } from './components/SeismicView';
 import { CrossSectionView, type CrossSectionHandle } from './components/CrossSectionView';
-import { DataPanel } from './components/DataPanel';
 import { useConfirm } from './hooks/useConfirm';
 
 import {
@@ -107,7 +106,6 @@ export default function App() {
   const [depthWindow, setDepthWindow] = useState<[number, number] | null>(null);
   const [cursorDepth, setCursorDepth] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [dataPanelOpen, setDataPanelOpen] = useState(false);
   const { confirm: confirmDestroy, dialog: destroyDialog } = useConfirm();
   const [focusedWellId, setFocusedWellId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -285,9 +283,6 @@ export default function App() {
             <Milestone size={16} strokeWidth={1.75} />
           </button>
           <ExportMenu bodyRef={bodyRef} depthWindow={effectiveWindow} />
-          <button className={`iconbtn ${dataPanelOpen ? 'on' : ''}`} title="Данные проекта" onClick={() => setDataPanelOpen((o) => !o)}>
-            <Database size={16} strokeWidth={1.75} />
-          </button>
           <button className="btn ghost sm" title="Добавить демо-скважину"
             onClick={() => loadLasText(buildDemoLas(wells.length), 'andromeda-demo.las')}>
             Демо
@@ -318,7 +313,17 @@ export default function App() {
         onDrop={(e) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files) addLasFiles(e.dataTransfer.files); }}
       >
         {tab === 'dashboard' ? (
-          <Dashboard projectName={projectName} wells={wells} markers={markers} />
+          <Dashboard
+            projectName={projectName}
+            wells={wells}
+            markers={markers}
+            onActivateWell={setActiveWell}
+            onSelectMarker={selectMarker}
+            onShow={(t, focus) => {
+              setTab(t as TabKey);
+              if (focus) setFocusRequest(focus);
+            }}
+          />
         ) : tab === 'map' ? (
           <WellMap ref={mapRef} wells={wells} markers={markers} activeWellId={activeWellId} onActivate={setActiveWell} onZoomChange={setMapZoomPct} />
         ) : tab === 'reserves' ? (
@@ -488,23 +493,6 @@ export default function App() {
       </footer>
 
       {showImport && <ImportModal onClose={() => setShowImport(false)} />}
-
-      <DataPanel
-        open={dataPanelOpen}
-        onClose={() => setDataPanelOpen(false)}
-        wells={wells}
-        markers={markers}
-        onActivateWell={setActiveWell}
-        onSelectMarker={selectMarker}
-        onShow={(t, focus) => {
-          setTab(t as TabKey);
-          if (focus) setFocusRequest(focus);
-          // The panel docks to the same right edge the marker inspector and
-          // (on narrower windows) other views' own panels use — closing on
-          // navigate avoids sitting on top of whatever "Показать" just opened.
-          setDataPanelOpen(false);
-        }}
-      />
 
       {destroyDialog}
     </div>
