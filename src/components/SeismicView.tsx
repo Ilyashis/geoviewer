@@ -22,6 +22,7 @@ import { fieldVelocityTable } from '../wells/checkshot';
 import { computeTrajectory, type TrajPoint } from '../wells/deviation';
 import { structuralControlPoints } from '../wells/structure';
 import { useStore } from '../store';
+import { useConfirm } from '../hooks/useConfirm';
 
 interface Props {
   wells: Well[];
@@ -42,6 +43,19 @@ const NODE_COUNT = 14; // editable nodes along the horizon
 const CONV_PRESETS: Record<'const' | 'linear', VelocityModel> = { const: DEFAULT_VELOCITY, linear: COMPACTION };
 const niceStep = (raw: number) => { const p = Math.pow(10, Math.floor(Math.log10(raw))); const n = raw / p; return (n >= 5 ? 5 : n >= 2 ? 2 : 1) * p; };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+// A well top always has a colour (used to pick this label's colour while
+// editing); an imported line's numbered pick ("1", "2"…) doesn't, since
+// nothing carries colour into the saved ControlPoint[]. Falls back to a
+// small fixed palette, picked deterministically from the label so the same
+// horizon keeps the same colour across renders and reloads.
+const FALLBACK_HORIZON_COLORS = ['#10a1ff', '#FF9500', '#09b37b', '#AF52DE', '#eb5757', '#00c7be', '#f2c94c', '#B6C2CE'];
+function horizonColorFor(label: string, horizonList: { label: string; color: string }[]): string {
+  const known = horizonList.find((h) => h.label === label);
+  if (known) return known.color;
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) hash = (hash * 31 + label.charCodeAt(i)) | 0;
+  return FALLBACK_HORIZON_COLORS[Math.abs(hash) % FALLBACK_HORIZON_COLORS.length];
+}
 
 /**
  * 2D seismic: two independent lines (W→E and S→N) through the same wells, each
@@ -84,6 +98,7 @@ export function SeismicView({ wells, markers }: Props) {
   const setSegyLineTie = useStore((s) => s.setSegyLineTie);
   const focusRequest = useStore((s) => s.focusRequest);
   const setFocusRequest = useStore((s) => s.setFocusRequest);
+  const { confirm: confirmSwitch, dialog: switchDialog } = useConfirm();
 
   const edit = edits[lineId];
   const setEdit = (e: EditState | null) => setEdits((prev) => ({ ...prev, [lineId]: e }));
@@ -184,6 +199,33 @@ export function SeismicView({ wells, markers }: Props) {
     }
     return [...by.entries()].map(([label, e]) => ({ label, color: e.color, seedTwt: e.sum / e.n }));
   }, [field]);
+
+  /**
+   * Every OTHER horizon already saved to the map, on this line — drawn as a
+   * muted reference while a different one is being edited, the same idea
+   * Petrel/OpendTect use (each horizon its own colour, all visible at once)
+   * so switching what you're picking doesn't mean losing sight of what's
+   * already been picked. `ControlPoint[]` only carries depth (z), not TWT,
+   * so it's converted back through the CURRENT velocity model — same as the
+   * active edit's own depth readout, consistent under one conversion rather
+   * than frozen at whatever model was active when it was saved.
+   */
+  const savedHorizons = useMemo(() => {
+    if (!field) return [];
+    const n = field.section.nTraces;
+    const out: { label: string; color: string; twt: Float64Array }[] = [];
+    for (const label of Object.keys(seismicHorizons)) {
+      if (label === edit?.label) continue;
+      const controls = seismicHorizons[label]?.[lineId];
+      if (!controls || controls.length === 0) continue;
+      const twt = new Float64Array(n);
+      const m = Math.min(controls.length, n);
+      for (let i = 0; i < m; i++) twt[i] = depthToTwt(conv, controls[i].z);
+      for (let i = m; i < n; i++) twt[i] = twt[m - 1] ?? 0; // defensive: trace count shouldn't drift, but never index past what was saved
+      out.push({ label, color: horizonColorFor(label, horizonList), twt });
+    }
+    return out;
+  }, [seismicHorizons, lineId, field, edit?.label, conv, horizonList]);
 
   // Drop stale picks on both lines when the underlying wells/markers change —
   // switching which line is on screen must NOT clear the other line's work.
@@ -625,6 +667,29 @@ export function SeismicView({ wells, markers }: Props) {
       ctx.font = '11px ui-monospace, monospace';
     }
 
+    // Other saved horizons on this line — muted, each its own colour, so
+    // switching what's being edited doesn't hide what's already picked.
+    if (savedHorizons.length > 0) {
+      const n = section.nTraces;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
+      ctx.lineJoin = 'round'; ctx.globalAlpha = 0.55;
+      for (const h of savedHorizons) {
+        ctx.strokeStyle = h.color; ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          const x = xOf(n > 1 ? i / (n - 1) : 0), y = yOf(h.twt[i]);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.restore();
+      // Legend label drawn near the amplitude one, below — top-left and
+      // top-right are both already claimed by the line-picker panel and the
+      // pick-results aside, so bottom-right is the one corner with room.
+    }
+
     // Editable horizon: interpolated line + draggable node handles.
     if (edit && horizonTwt) {
       const n = section.nTraces;
@@ -642,12 +707,26 @@ export function SeismicView({ wells, markers }: Props) {
       }
     }
 
-    // Amplitude legend.
+    // Amplitude legend, and — stacked above it, same corner — which muted
+    // reference horizons are which colour. Top-left is the line/pick panel,
+    // top-right is the pick-results aside whenever a horizon's being edited
+    // (i.e. almost always when this legend would have something to show),
+    // so bottom-right is the one spot not already claimed by an HTML overlay.
     const lw = 96, lh = 8, lx = L + pw - lw - 8, ly = T + ph - 20;
+    if (savedHorizons.length > 0) {
+      ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'left';
+      savedHorizons.forEach((h, k) => {
+        // ly - 5 is already the "амплитуда −/+" label's baseline — clear it.
+        const ry = ly - 22 - (savedHorizons.length - 1 - k) * 14;
+        ctx.fillStyle = h.color; ctx.fillRect(lx, ry - 7, 9, 9);
+        ctx.fillStyle = text3; ctx.fillText(h.label, lx + 13, ry);
+      });
+      ctx.font = '11px ui-monospace, monospace';
+    }
     for (let i = 0; i < lw; i++) { const [r, g, b] = seismicColor((i / lw) * 2 - 1); ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(lx + i, ly, 1, lh); }
     ctx.strokeStyle = border; ctx.strokeRect(lx, ly, lw, lh);
     ctx.fillStyle = text3; ctx.textAlign = 'center'; ctx.fillText('амплитуда −/+', lx + lw / 2, ly - 5);
-  }, [field, image, size, geom, edit, horizonTwt, crossing, lineId, faultCrossings, conv, faultPicks, isImported, tieDraft]);
+  }, [field, image, size, geom, edit, horizonTwt, crossing, lineId, faultCrossings, conv, faultPicks, isImported, tieDraft, savedHorizons]);
 
   // Volumes are entirely well/line-independent (own FieldSection-free path),
   // so this mode is reachable even when there's nothing for the 2D side to
@@ -671,6 +750,21 @@ export function SeismicView({ wells, markers }: Props) {
   }
 
   const inMap = edit ? !!seismicHorizons[edit.label]?.[lineId] : false;
+  // Picking a different horizon (or starting over on an imported line)
+  // overwrites `edits[lineId]` outright — confirm first when that would
+  // throw away node drags nobody's told the map about yet.
+  const switchHorizon = (next: () => void) => {
+    if (edit && !inMap) {
+      confirmSwitch({
+        title: `Переключить горизонт, не сохранив «${edit.label}»?`,
+        message: 'Этот горизонт ещё не сохранён в карту («Использовать в карте») — переключение сотрёт правки узлов без возможности восстановления.',
+        confirmLabel: 'Переключить',
+        onConfirm: next,
+      });
+    } else {
+      next();
+    }
+  };
 
   return (
     <>
@@ -700,7 +794,7 @@ export function SeismicView({ wells, markers }: Props) {
               value={edit?.label}
               onChange={(label) => {
                 const h = horizonList.find((x) => x.label === label);
-                if (h) snap(h.label, h.color, h.seedTwt);
+                if (h) switchHorizon(() => snap(h.label, h.color, h.seedTwt));
               }}
             />
             {edit && <div className="seismic-hint">Перетащите узлы, чтобы поправить горизонт.</div>}
@@ -734,7 +828,7 @@ export function SeismicView({ wells, markers }: Props) {
             {edit ? (
               <>
                 <div className="seismic-hint">Перетащите узлы, чтобы поправить горизонт.</div>
-                <button className="seismic-remove" onClick={() => { setEdit(null); setPickSeq((n) => n + 1); }}>
+                <button className="seismic-remove" onClick={() => switchHorizon(() => { setEdit(null); setPickSeq((n) => n + 1); })}>
                   снять заново
                 </button>
               </>
@@ -844,6 +938,7 @@ export function SeismicView({ wells, markers }: Props) {
             : calModel.kind === 'const' ? `V=${calModel.v}` : 'по чекшотам'}</span>
         )}
       </div>
+      {switchDialog}
     </div>
     </>
   );
