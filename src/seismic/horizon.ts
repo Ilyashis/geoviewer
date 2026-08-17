@@ -89,6 +89,11 @@ export function sampleHorizonAt(horizonTwt: Float64Array, fracIndex: number): nu
   return horizonTwt[lo] + (horizonTwt[hi] - horizonTwt[lo]) * t;
 }
 
+/** Map-space point at a fractional position (0 = p0, 1 = p1) along a section line. */
+export function pointOnLine(line: FieldSection['line'], f: number): { x: number; y: number } {
+  return { x: line.p0.x + f * (line.p1.x - line.p0.x), y: line.p0.y + f * (line.p1.y - line.p0.y) };
+}
+
 /**
  * A tracked horizon (TWT per trace) → depth control points along the line, using
  * the given conversion velocity (the calibrated/chosen model, not the earth truth).
@@ -99,11 +104,8 @@ export function horizonControls(field: FieldSection, horizonTwt: Float64Array, c
   const out: ControlPoint[] = [];
   for (let i = 0; i < n; i++) {
     const f = n > 1 ? i / (n - 1) : 0;
-    out.push({
-      x: line.p0.x + f * (line.p1.x - line.p0.x),
-      y: line.p0.y + f * (line.p1.y - line.p0.y),
-      z: twtToDepth(conv, horizonTwt[i]),
-    });
+    const p = pointOnLine(line, f);
+    out.push({ x: p.x, y: p.y, z: twtToDepth(conv, horizonTwt[i]) });
   }
   return out;
 }

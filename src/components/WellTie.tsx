@@ -1,20 +1,22 @@
 import { useMemo } from 'react';
 import { Trash2, Plus } from 'lucide-react';
 import type { Marker, Well } from '../types';
+import { useConfirm } from '../hooks/useConfirm';
 
 interface Props {
   wells: Well[];
   markers: Marker[];
+  activeWellId: string | null;
   updateMarkerDepth: (markerId: string, wellId: string, depth: number) => void;
   removeMarkerDepth: (markerId: string, wellId: string) => void;
   renameMarker: (markerId: string, label: string) => void;
   removeMarker: (markerId: string) => void;
-  addMarkerAtDepth: (depth: number) => void;
+  addMarkerAtDepth: (wellId: string, depth: number) => void;
 }
 
 /** Editable stratigraphy grid: surfaces × wells, with misties and completeness. */
 export function WellTie({
-  wells, markers, updateMarkerDepth, removeMarkerDepth, renameMarker, removeMarker, addMarkerAtDepth,
+  wells, markers, activeWellId, updateMarkerDepth, removeMarkerDepth, renameMarker, removeMarker, addMarkerAtDepth,
 }: Props) {
   const midDepth = useMemo(() => {
     let mn = Infinity, mx = -Infinity;
@@ -24,6 +26,12 @@ export function WellTie({
     }
     return Number.isFinite(mn) ? Math.round((mn + mx) / 2) : 2000;
   }, [wells]);
+  const { confirm, dialog } = useConfirm();
+  // The tie table has no per-well click to anchor a real pick on, so the
+  // active well stands in as the origin — every other well is then seeded
+  // from its nearest neighbour (see addMarkerAtDepth) instead of copying
+  // this same number flat across the field.
+  const originWellId = activeWellId ?? wells[0]?.id;
 
   if (wells.length === 0) {
     return (
@@ -45,7 +53,7 @@ export function WellTie({
           <div className="tie-eyebrow">Привязка</div>
           <h1 className="tie-title">Стратиграфия по скважинам</h1>
         </div>
-        <button className="btn" onClick={() => addMarkerAtDepth(midDepth)}>
+        <button className="btn" disabled={!originWellId} onClick={() => originWellId && addMarkerAtDepth(originWellId, midDepth)}>
           <Plus size={15} strokeWidth={1.9} /> Разбивка
         </button>
       </div>
@@ -54,6 +62,12 @@ export function WellTie({
         <p className="tie-empty">Разбивок пока нет. Добавьте через кнопку выше или инструментом «Маркер» на корр. схеме.</p>
       ) : (
         <div className="tie-scroll">
+          {markers.some((m) => m.seeded?.length) && (
+            <p className="tie-legend">
+              <span className="tie-depth-swatch seeded" /> затравка по ближайшей скважине — не настоящий пик, проверьте
+              глубину
+            </p>
+          )}
           <table className="tie-table">
             <thead>
               <tr>
@@ -72,18 +86,24 @@ export function WellTie({
                       <span className="tie-dot" style={{ background: m.color }} />
                       <input className="tie-name" value={m.label}
                         onChange={(e) => renameMarker(m.id, e.target.value)} aria-label="Имя разбивки" />
-                      <button className="tie-del" title="Удалить разбивку" onClick={() => removeMarker(m.id)}>
+                      <button className="tie-del" title="Удалить разбивку" onClick={() => confirm({
+                        title: `Удалить разбивку «${m.label}»?`,
+                        message: 'Пикировки по всем скважинам для этой разбивки будут удалены без возможности восстановления.',
+                        onConfirm: () => removeMarker(m.id),
+                      })}>
                         <Trash2 size={13} strokeWidth={1.75} />
                       </button>
                     </td>
                     {wells.map((w) => {
                       const d = m.depths[w.id];
                       const has = Number.isFinite(d);
+                      const seeded = has && m.seeded?.includes(w.id);
                       return (
                         <td key={w.id}>
                           <input
-                            className={`tie-depth ${has ? '' : 'empty'}`}
+                            className={`tie-depth ${has ? '' : 'empty'} ${seeded ? 'seeded' : ''}`}
                             type="number" step={0.1} placeholder="—"
+                            title={seeded ? 'Затравка по ближайшей скважине — не настоящий пик, проверьте глубину' : undefined}
                             value={has ? Number((d as number).toFixed(2)) : ''}
                             onChange={(e) => {
                               const v = e.target.value.trim();
@@ -111,6 +131,7 @@ export function WellTie({
           </table>
         </div>
       )}
+      {dialog}
     </div>
   );
 }

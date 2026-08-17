@@ -5,7 +5,7 @@ import { parseTopsCsv } from '../tops/csv';
 import { parsePetrelTops, isPetrelTops } from '../tops/petrel';
 import { readTextFile } from '../util/encoding';
 import { parseLithologyCsv } from '../lithology/csv';
-import { parseSurveyCsv } from '../survey/csv';
+import { parseSurveyAny } from '../survey/inclinometry';
 import { parseWellHeadsCsv } from '../wells/heads';
 
 type Kind = 'tops' | 'litho' | 'survey' | 'heads';
@@ -40,11 +40,15 @@ export function ImportModal({ onClose }: Props) {
   const importLithology = useStore((s) => s.importLithology);
   const importSurveys = useStore((s) => s.importSurveys);
   const importWellHeads = useStore((s) => s.importWellHeads);
+  const importWellKb = useStore((s) => s.importWellKb);
   const [kind, setKind] = useState<Kind>('tops');
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [warn, setWarn] = useState<string | null>(null);
+  // Kept for the survey reader: a single-well report names its well only in the
+  // file header, and falls back to the file name when even that is absent.
+  const [fileName, setFileName] = useState<string | undefined>(undefined);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reset = () => { setError(null); setSummary(null); setWarn(null); };
@@ -86,11 +90,23 @@ export function ImportModal({ onClose }: Props) {
         setSummary(`Импортировано: координаты ${r.wells} скважин, альтитуда у ${r.withKb}.`);
         if (r.unmatchedWells.length) setWarn(`Не найдены скважины: ${r.unmatchedWells.join(', ')}`);
       } else {
-        const { rows } = parseSurveyCsv(text);
+        const { rows, note, kb } = parseSurveyAny(text, fileName);
         if (rows.length === 0) { setError('Нет валидных строк со станциями.'); return; }
         const r = importSurveys(rows);
-        setSummary(`Импортировано: ${r.stations} станций в ${r.wells} скважин.`);
-        if (r.unmatchedWells.length) setWarn(`Не найдены скважины: ${r.unmatchedWells.join(', ')}`);
+
+        // The elevation named in the file header is applied too — for many
+        // wells it is the only place a depth datum appears at all.
+        const k = kb ? importWellKb([{ well: kb.well, kb: kb.value }]) : null;
+        const alt = k?.wells ? `, альтитуда ${kb!.value.toFixed(2)} м` : '';
+        setSummary(`Импортировано: ${r.stations} станций в ${r.wells} скважин (${note})${alt}.`);
+
+        const warns: string[] = [];
+        if (r.unmatchedWells.length) warns.push(`Не найдены скважины: ${r.unmatchedWells.join(', ')}`);
+        // Never change a known datum silently: every TVDSS map moves with it.
+        for (const p of k?.replaced ?? []) {
+          warns.push(`Альтитуда ${p.well} заменена: было ${p.was.toFixed(2)} м, стало ${kb!.value.toFixed(2)} м`);
+        }
+        if (warns.length) setWarn(warns.join('. '));
       }
     } catch (e) {
       setError((e as Error).message);
@@ -147,7 +163,7 @@ export function ImportModal({ onClose }: Props) {
           className="modal-textarea"
           placeholder={PLACEHOLDER[kind]}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => { setFileName(undefined); setText(e.target.value); }}
           spellCheck={false}
         />
 
@@ -165,7 +181,7 @@ export function ImportModal({ onClose }: Props) {
             type="file"
             accept=".csv,.tsv,.txt"
             hidden
-            onChange={async (e) => { const f = e.target.files?.[0]; if (f) setText(await readTextFile(f)); e.target.value = ''; }}
+            onChange={async (e) => { const f = e.target.files?.[0]; if (f) { setFileName(f.name); setText(await readTextFile(f)); } e.target.value = ''; }}
           />
           <button className="btn ghost" onClick={() => fileRef.current?.click()}>
             <Upload size={15} strokeWidth={1.75} /> Загрузить файл

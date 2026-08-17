@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Maximize2, Minimize2, Settings, Trash2, GitBranch } from 'lucide-react';
 import type { Well, Template, LithoInterval, LithoPattern } from '../types';
 import { defaultTemplate } from '../plate/template';
@@ -26,6 +26,9 @@ interface Props {
   onDepthWindowChange: (w: [number, number]) => void;
   cursorDepth: number | null;
   onCursorDepth: (d: number | null) => void;
+  /** The shared horizontally-scrolling row of plates — dragging a plate pans
+   * both its own depth window and this container's scroll in one gesture. */
+  scrollRef?: RefObject<HTMLDivElement | null>;
 }
 
 export const DEPTH_AXIS_W = 60;
@@ -60,6 +63,7 @@ export function WellLogPlate({
   onDepthWindowChange,
   cursorDepth,
   onCursorDepth,
+  scrollRef,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -220,7 +224,10 @@ export function WellLogPlate({
   }
 
   // --- Interaction ---
-  const dragRef = useRef<{ y: number; win: [number, number] } | null>(null);
+  // Pointer capture (not plain mouse events) so a fast horizontal drag that
+  // crosses into a neighbouring plate, or leaves the row entirely, keeps
+  // delivering move/up events here instead of silently ending the pan.
+  const dragRef = useRef<{ x: number; y: number; win: [number, number]; scrollLeft: number } | null>(null);
   function depthAtClientY(clientY: number): number {
     const rect = canvasRef.current!.getBoundingClientRect();
     const plotH = rect.height - HEADER_H;
@@ -228,15 +235,19 @@ export function WellLogPlate({
     const frac = Math.max(0, Math.min(1, (clientY - rect.top - HEADER_H) / plotH));
     return top + frac * (bottom - top);
   }
-  function onMouseDown(e: React.MouseEvent) {
+  function onPointerDown(e: React.PointerEvent) {
     onActivate?.();
     if (tool === 'marker' && onCreateMarker) {
       onCreateMarker(depthAtClientY(e.clientY));
       return; // don't start a pan when placing a marker
     }
-    dragRef.current = { y: e.clientY, win: [...depthWindow] as [number, number] };
+    dragRef.current = {
+      x: e.clientX, y: e.clientY, win: [...depthWindow] as [number, number],
+      scrollLeft: scrollRef?.current?.scrollLeft ?? 0,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
   }
-  function onMouseMove(e: React.MouseEvent) {
+  function onPointerMove(e: React.PointerEvent) {
     const rect = canvasRef.current!.getBoundingClientRect();
     const plotH = rect.height - HEADER_H;
     const [top, bottom] = depthWindow;
@@ -246,9 +257,13 @@ export function WellLogPlate({
       const d = dragRef.current;
       const shift = -((e.clientY - d.y) / plotH) * (d.win[1] - d.win[0]);
       onDepthWindowChange([d.win[0] + shift, d.win[1] + shift]);
+      if (scrollRef?.current) scrollRef.current.scrollLeft = d.scrollLeft - (e.clientX - d.x);
     }
   }
-  const endDrag = () => { dragRef.current = null; };
+  function onPointerUp(e: React.PointerEvent) {
+    dragRef.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  }
 
   const trackKeys = [
     ...template.tracks.map((t) => ({ key: t.title, label: t.title })),
@@ -298,10 +313,10 @@ export function WellLogPlate({
         ref={wrapRef}
         className="plate-canvas-wrap"
         data-plate-id={well.id}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={endDrag}
-        onMouseLeave={() => { endDrag(); onCursorDepth(null); }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerLeave={() => { if (!dragRef.current) onCursorDepth(null); }}
       >
         <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
       </div>

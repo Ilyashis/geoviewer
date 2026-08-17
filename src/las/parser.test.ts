@@ -232,6 +232,43 @@ ${wellLines}
   });
 });
 
+describe('LAS 3.0', () => {
+  const v3 = (dlm: string, data: string) => `~Version
+ VERS. 3.0 :
+ WRAP. NO :
+ DLM . ${dlm} :
+~Well
+ NULL. -999.25 :
+ WELL. LAS3 :
+~Curve
+ DEPT   .M    : DEPTH
+ RHOZC[0].G/CC : AZD Corrected Density
+ RHOZC[1].G/CC : AZD Corrected Density
+~ASCII
+${data}`;
+
+  it('разбирает секции 3.0 и массивные мнемоники', () => {
+    const w = parseLasToWell(v3('SPACE', '3400.0 2.414 2.457\n3400.1 2.422 2.472'));
+    expect(w.name).toBe('LAS3');
+    expect(w.curves.map((c) => c.mnemonic)).toEqual(['RHOZC[0]', 'RHOZC[1]']);
+    expect(w.depth).toEqual([3400.0, 3400.1]);
+  });
+
+  it('не сдвигает колонки, когда при DLM COMMA значение пропущено', () => {
+    // `3400.0,,2.457` — вторая кривая без замера. Схлопывание разделителей
+    // сдвинуло бы 2.457 в RHOZC[0], то есть выдало бы чужую кривую за свою.
+    const w = parseLasToWell(v3('COMMA', '3400.0,,2.457\n3400.1,2.422,2.472'));
+    expect(w.curves.find((c) => c.mnemonic === 'RHOZC[0]')!.values).toEqual([null, 2.422]);
+    expect(w.curves.find((c) => c.mnemonic === 'RHOZC[1]')!.values).toEqual([2.457, 2.472]);
+  });
+
+  it('читает объявленный TAB как разделитель', () => {
+    const w = parseLasToWell(v3('TAB', '3400.0\t\t2.457'));
+    expect(w.curves.find((c) => c.mnemonic === 'RHOZC[0]')!.values).toEqual([null]);
+    expect(w.curves.find((c) => c.mnemonic === 'RHOZC[1]')!.values).toEqual([2.457]);
+  });
+});
+
 describe('нестандартная раскладка ~Well', () => {
   const inverted = `~V
  VERS. 2.0 :

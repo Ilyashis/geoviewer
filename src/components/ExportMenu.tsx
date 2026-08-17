@@ -1,11 +1,19 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
-import { Download, Milestone, Layers, Image as ImageIcon, FileText } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
+import { Download, Milestone, Layers, Image as ImageIcon, FileText, Route, GitBranch, Spline, Activity, Radio, Mountain } from 'lucide-react';
 import { useStore } from '../store';
 import { buildTopsCsv } from '../export/tops';
 import { buildLithologyCsv } from '../export/lithology';
+import { buildDevFile } from '../export/dev';
+import { buildFaultsCsv } from '../export/faults';
+import { buildSectionsCsv } from '../export/sections';
+import { buildCheckshotsCsv } from '../export/checkshots';
+import { buildSegyLinesCsv } from '../export/segyLines';
+import { buildSeismicHorizonsCsv } from '../export/seismicHorizons';
 import { exportCorrelationPng, exportCorrelationJpeg } from '../export/image';
 import { jpegToPdf } from '../export/pdf';
 import { downloadText, triggerDownload } from '../export/download';
+import { metricWells } from '../wells/coords';
 
 interface Props {
   bodyRef: RefObject<HTMLElement>;
@@ -19,16 +27,39 @@ function stamp(): string {
 export function ExportMenu({ bodyRef, depthWindow }: Props) {
   const wells = useStore((s) => s.wells);
   const markers = useStore((s) => s.markers);
+  const faults = useStore((s) => s.faults);
+  const sections = useStore((s) => s.sections);
+  const checkshots = useStore((s) => s.checkshots);
+  const segyLines = useStore((s) => s.segyLines);
+  const seismicHorizons = useStore((s) => s.seismicHorizons);
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  // Portalled to <body> — see the .menu CSS comment for why: .topbar's
+  // horizontal-scroll overflow silently clips a non-portalled dropdown here.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const measure = () => setRect(btnRef.current?.getBoundingClientRect() ?? null);
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, true);
+    return () => {
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure, true);
+    };
   }, [open]);
 
   const exportCsv = () => {
@@ -42,6 +73,42 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
   };
 
   const hasLithology = wells.some((w) => w.lithology.length > 0);
+
+  const exportFaultsCsv = () => {
+    downloadText(`faults-${stamp()}.csv`, buildFaultsCsv(faults, markers));
+    setOpen(false);
+  };
+
+  const exportSectionsCsv = () => {
+    downloadText(`sections-${stamp()}.csv`, buildSectionsCsv(sections));
+    setOpen(false);
+  };
+
+  const exportCheckshotsCsv = () => {
+    downloadText(`checkshots-${stamp()}.csv`, buildCheckshotsCsv(checkshots));
+    setOpen(false);
+  };
+
+  const exportSegyLinesCsv = () => {
+    downloadText(`segy-lines-${stamp()}.csv`, buildSegyLinesCsv(segyLines));
+    setOpen(false);
+  };
+
+  const hasSeismicHorizons = Object.keys(seismicHorizons).length > 0;
+  const exportSeismicHorizonsCsv = () => {
+    downloadText(`seismic-horizons-${stamp()}.csv`, buildSeismicHorizonsCsv(seismicHorizons));
+    setOpen(false);
+  };
+
+  const coordWells = metricWells(wells).filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y));
+  const exportDev = () => {
+    // One file per well — that's what .dev is — so stagger the downloads a
+    // little; firing a dozen at once in one tick loses some of them.
+    coordWells.forEach((w, i) => {
+      setTimeout(() => downloadText(`${w.name}.dev`, buildDevFile(w), 'text/plain'), i * 150);
+    });
+    setOpen(false);
+  };
 
   const exportPng = () => {
     const url = bodyRef.current && exportCorrelationPng(bodyRef.current, markers, depthWindow);
@@ -58,18 +125,42 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
     setOpen(false);
   };
 
+  const menuStyle = rect ? {
+    top: rect.bottom + 6,
+    left: Math.max(8, Math.min(rect.right - 190, window.innerWidth - 198)),
+  } : undefined;
+
   return (
-    <div className="menu-wrap" ref={ref}>
-      <button className="iconbtn" title="Экспорт" onClick={() => setOpen((o) => !o)} disabled={wells.length === 0}>
+    <div className="menu-wrap">
+      <button ref={btnRef} className="iconbtn" title="Экспорт" onClick={() => setOpen((o) => !o)} disabled={wells.length === 0}>
         <Download size={16} strokeWidth={1.75} />
       </button>
-      {open && (
-        <div className="menu">
+      {open && rect && createPortal(
+        <div className="menu" ref={popRef} style={menuStyle}>
           <button className="menu-item" onClick={exportCsv} disabled={markers.length === 0}>
             <Milestone size={15} strokeWidth={1.75} /> Разбивки (CSV)
           </button>
           <button className="menu-item" onClick={exportLithoCsv} disabled={!hasLithology}>
             <Layers size={15} strokeWidth={1.75} /> Литология (CSV)
+          </button>
+          <button className="menu-item" onClick={exportFaultsCsv} disabled={faults.length === 0}>
+            <GitBranch size={15} strokeWidth={1.75} /> Разломы (CSV)
+          </button>
+          <button className="menu-item" onClick={exportSectionsCsv} disabled={sections.length === 0}>
+            <Spline size={15} strokeWidth={1.75} /> Линии разреза (CSV)
+          </button>
+          <button className="menu-item" onClick={exportCheckshotsCsv} disabled={checkshots.length === 0}>
+            <Activity size={15} strokeWidth={1.75} /> Чекшоты (CSV)
+          </button>
+          <button className="menu-item" onClick={exportSegyLinesCsv} disabled={segyLines.length === 0}
+            title="Координаты трасс — привязанные, если у линии есть привязка">
+            <Radio size={15} strokeWidth={1.75} /> SEG-Y линии (CSV)
+          </button>
+          <button className="menu-item" onClick={exportSeismicHorizonsCsv} disabled={!hasSeismicHorizons}>
+            <Mountain size={15} strokeWidth={1.75} /> Сейсмогоризонты (CSV)
+          </button>
+          <button className="menu-item" onClick={exportDev} disabled={coordWells.length === 0} title="Petrel-совместимый .dev на каждую скважину с координатами">
+            <Route size={15} strokeWidth={1.75} /> Траектории (.dev)
           </button>
           <button className="menu-item" onClick={exportPng}>
             <ImageIcon size={15} strokeWidth={1.75} /> Планшет (PNG)
@@ -77,7 +168,8 @@ export function ExportMenu({ bodyRef, depthWindow }: Props) {
           <button className="menu-item" onClick={exportPdf}>
             <FileText size={15} strokeWidth={1.75} /> Планшет (PDF)
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

@@ -1,11 +1,17 @@
-import { useMemo } from 'react';
-import { Layers, Waves, Milestone, Ruler } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Layers, Waves, Milestone, Ruler, ArrowRight } from 'lucide-react';
 import type { Marker, Well } from '../types';
+import { useStore } from '../store';
 
 interface Props {
   projectName: string;
   wells: Well[];
   markers: Marker[];
+  onActivateWell: (id: string) => void;
+  onSelectMarker: (id: string) => void;
+  /** Switches the active tab; `focus` additionally asks that view to select
+   * one specific item once it's open (`focusRequest` in the framework slice). */
+  onShow: (tab: string, focus?: { target: 'seismicLine' | 'section'; id: string }) => void;
 }
 
 function finiteExtent(wells: Well[]): [number, number] | null {
@@ -19,8 +25,22 @@ function finiteExtent(wells: Well[]): [number, number] | null {
   return min <= max ? [min, max] : null;
 }
 
-/** Project summary: stat tiles, lithology composition, mistie spread, wells. */
-export function Dashboard({ projectName, wells, markers }: Props) {
+type DataKind = 'wells' | 'markers' | 'checkshots' | 'segy' | 'volumes' | 'faults' | 'sections' | 'horizons';
+
+/** Project summary: stat tiles, lithology composition, mistie spread, and
+ * every other object type in the project — one table, switched by tab,
+ * replacing the standalone "Данные проекта" sidebar (same idea: a read-only
+ * index of everything loaded/created, with "Показать" jumping to the view
+ * that actually owns that object, rather than a second place to edit it). */
+export function Dashboard({ projectName, wells, markers, onActivateWell, onSelectMarker, onShow }: Props) {
+  const checkshots = useStore((s) => s.checkshots);
+  const segyLines = useStore((s) => s.segyLines);
+  const segyVolumes = useStore((s) => s.segyVolumes);
+  const faults = useStore((s) => s.faults);
+  const sections = useStore((s) => s.sections);
+  const seismicHorizons = useStore((s) => s.seismicHorizons);
+  const [kind, setKind] = useState<DataKind>('wells');
+
   const stats = useMemo(() => {
     const totalCurves = wells.reduce((s, w) => s + w.curves.length, 0);
     const mnemonics = new Set<string>();
@@ -53,6 +73,20 @@ export function Dashboard({ projectName, wells, markers }: Props) {
 
     return { totalCurves, uniq: mnemonics.size, extent, lithoRows, lithoTotal, mis, maxSpread };
   }, [wells, markers]);
+
+  const horizonRows = useMemo(() => Object.entries(seismicHorizons).flatMap(([label, byLine]) =>
+    Object.keys(byLine).map((lineId) => ({ label, lineId }))), [seismicHorizons]);
+
+  const dataTabs: { key: DataKind; label: string; count: number }[] = [
+    { key: 'wells', label: 'Скважины', count: wells.length },
+    { key: 'markers', label: 'Разбивки', count: markers.length },
+    { key: 'checkshots', label: 'Чекшоты', count: checkshots.length },
+    { key: 'segy', label: 'SEG-Y', count: segyLines.length },
+    { key: 'volumes', label: 'Кубы', count: segyVolumes.length },
+    { key: 'faults', label: 'Разломы', count: faults.length },
+    { key: 'sections', label: 'Разрезы', count: sections.length },
+    { key: 'horizons', label: 'Сейсмогоризонты', count: horizonRows.length },
+  ];
 
   if (wells.length === 0) {
     return (
@@ -125,25 +159,164 @@ export function Dashboard({ projectName, wells, markers }: Props) {
         )}
 
         <section className="dash-card dash-wide">
-          <h3 className="dash-card-title">Скважины</h3>
-          <table className="dash-table">
-            <thead>
-              <tr><th>Скважина</th><th>Отсчёты</th><th>Кривые</th><th>Интервал, м</th></tr>
-            </thead>
-            <tbody>
-              {wells.map((w) => {
-                const e = finiteExtent([w]);
-                return (
-                  <tr key={w.id}>
-                    <td className="mono">{w.name}</td>
-                    <td className="num">{w.depth.length}</td>
-                    <td className="num">{w.curves.length}</td>
-                    <td className="num">{e ? `${Math.round(e[0])}–${Math.round(e[1])}` : '—'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <h3 className="dash-card-title">Данные проекта</h3>
+          <div className="dash-tabs">
+            {dataTabs.map((t) => (
+              <button key={t.key} className={`dash-tab-btn ${kind === t.key ? 'on' : ''}`} onClick={() => setKind(t.key)}>
+                {t.label} {t.count}
+              </button>
+            ))}
+          </div>
+
+          {kind === 'wells' && (
+            wells.length === 0 ? <div className="dash-table-empty">нет</div> : (
+              <table className="dash-table">
+                <thead><tr><th>Скважина</th><th>Отсчёты</th><th>Кривые</th><th>Интервал, м</th><th /></tr></thead>
+                <tbody>
+                  {wells.map((w) => {
+                    const e = finiteExtent([w]);
+                    return (
+                      <tr key={w.id}>
+                        <td className="mono">{w.name}</td>
+                        <td className="num">{w.depth.length}</td>
+                        <td className="num">{w.curves.length}</td>
+                        <td className="num">{e ? `${Math.round(e[0])}–${Math.round(e[1])}` : '—'}</td>
+                        <td><ShowBtn onClick={() => { onActivateWell(w.id); onShow('correlation'); }} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {kind === 'markers' && (
+            markers.length === 0 ? <div className="dash-table-empty">нет</div> : (
+              <table className="dash-table">
+                <thead><tr><th>Разбивка</th><th>Пикетов</th><th>Затравлено</th><th /></tr></thead>
+                <tbody>
+                  {markers.map((m) => {
+                    const n = Object.values(m.depths).filter(Number.isFinite).length;
+                    const seeded = m.seeded?.length ?? 0;
+                    return (
+                      <tr key={m.id}>
+                        <td className="mono"><span className="dash-dot" style={{ background: m.color }} />{m.label}</td>
+                        <td className="num">{n}</td>
+                        <td className="num">{seeded || '—'}</td>
+                        <td><ShowBtn onClick={() => { onSelectMarker(m.id); onShow('correlation'); }} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {kind === 'checkshots' && (
+            checkshots.length === 0 ? <div className="dash-table-empty">нет</div> : (
+              <table className="dash-table">
+                <thead><tr><th>Скважина</th><th>Пар</th><th /></tr></thead>
+                <tbody>
+                  {checkshots.map((c) => (
+                    <tr key={c.well}>
+                      <td className="mono">{c.well}</td>
+                      <td className="num">{c.points.length}</td>
+                      <td><ShowBtn onClick={() => onShow('seismic')} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {kind === 'segy' && (
+            segyLines.length === 0 ? <div className="dash-table-empty">нет</div> : (
+              <table className="dash-table">
+                <thead><tr><th>Линия</th><th>Трасс</th><th>Привязка</th><th /></tr></thead>
+                <tbody>
+                  {segyLines.map((l) => (
+                    <tr key={l.id}>
+                      <td className="mono">{l.label}</td>
+                      <td className="num">{l.traceCount}</td>
+                      <td className={l.tie ? '' : 'warn'}>{l.tie ? 'привязана' : 'не привязана'}</td>
+                      <td><ShowBtn onClick={() => onShow('seismic', { target: 'seismicLine', id: l.id })} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {kind === 'volumes' && (
+            segyVolumes.length === 0 ? <div className="dash-table-empty">нет</div> : (
+              <table className="dash-table">
+                <thead><tr><th>Куб</th><th>Инлайнов</th><th>Кросслайнов</th><th>Отсчётов</th><th /></tr></thead>
+                <tbody>
+                  {segyVolumes.map((v) => (
+                    <tr key={v.id}>
+                      <td className="mono">{v.label}</td>
+                      <td className="num">{v.nInline}</td>
+                      <td className="num">{v.nCrossline}</td>
+                      <td className="num">{v.nSamples}</td>
+                      <td><ShowBtn onClick={() => onShow('seismic')} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {kind === 'faults' && (
+            faults.length === 0 ? <div className="dash-table-empty">нет</div> : (
+              <table className="dash-table">
+                <thead><tr><th>Разлом</th><th>Пласты</th><th>Падение</th><th /></tr></thead>
+                <tbody>
+                  {faults.map((f) => (
+                    <tr key={f.id}>
+                      <td className="mono">{f.label}</td>
+                      <td className="num">{f.markerIds.length}</td>
+                      <td className="num">{f.dip != null ? `${f.dip}°` : '—'}</td>
+                      <td><ShowBtn onClick={() => onShow('map')} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {kind === 'sections' && (
+            sections.length === 0 ? <div className="dash-table-empty">нет</div> : (
+              <table className="dash-table">
+                <thead><tr><th>Линия</th><th>Точек</th><th /></tr></thead>
+                <tbody>
+                  {sections.map((s) => (
+                    <tr key={s.id}>
+                      <td className="mono">{s.label}</td>
+                      <td className="num">{s.points.length}</td>
+                      <td><ShowBtn onClick={() => onShow('section', { target: 'section', id: s.id })} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {kind === 'horizons' && (
+            horizonRows.length === 0 ? <div className="dash-table-empty">нет</div> : (
+              <table className="dash-table">
+                <thead><tr><th>Пласт</th><th>Линия</th><th /></tr></thead>
+                <tbody>
+                  {horizonRows.map((h) => (
+                    <tr key={`${h.label}-${h.lineId}`}>
+                      <td className="mono">{h.label}</td>
+                      <td>{h.lineId}</td>
+                      <td><ShowBtn onClick={() => onShow('seismic', { target: 'seismicLine', id: h.lineId })} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          )}
         </section>
       </div>
     </div>
@@ -158,4 +331,8 @@ function Tile({ icon, label, value, sub }: { icon: React.ReactNode; label: strin
       {sub && <div className="dash-tile-sub">{sub}</div>}
     </div>
   );
+}
+
+function ShowBtn({ onClick }: { onClick: () => void }) {
+  return <button className="dash-show" title="Показать" onClick={onClick}><ArrowRight size={13} strokeWidth={1.75} /></button>;
 }

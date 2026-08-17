@@ -48,6 +48,40 @@ function idwAt(pt: Pt, points: ControlPoint[], power = 2): number | null {
 }
 
 /**
+ * Unit vector toward the downthrown side of a fault, given the local trace
+ * tangent and the sign of a throw measurement (`estimateThrow`'s convention:
+ * positive means the side with `sideOfPolyline < 0` sits deeper). Always
+ * perpendicular to the trace — a fault dips across itself, never along its
+ * own strike.
+ */
+export function dipDirection(tangent: Pt, throwSign: number): Pt {
+  const len = Math.hypot(tangent.x, tangent.y);
+  if (len < 1e-9) return { x: 0, y: 0 };
+  const ux = tangent.x / len, uy = tangent.y / len;
+  const left = { x: -uy, y: ux }; // rotate +90°, matches sideOfPolyline's side > 0
+  return throwSign >= 0 ? { x: -left.x, y: -left.y } : left;
+}
+
+/**
+ * Apparent dip on a vertical section: a plane with true dip `trueDipDeg`
+ * (degrees from horizontal) dipping toward `dipDirVec`, cut by a section
+ * running along `sectionDirVec`, appears to dip at this angle instead —
+ * standard relation tan(apparent) = tan(true) × cos(angle between the
+ * section and the dip direction). Signed: positive means the plane gets
+ * deeper as the section runs forward along `sectionDirVec`. A section
+ * running along strike (perpendicular to the dip direction) sees the plane
+ * as flat (0°), same as looking down a structure contour. Null when either
+ * direction is degenerate (zero-length) — nothing to project onto.
+ */
+export function apparentDipDeg(trueDipDeg: number, dipDirVec: Pt, sectionDirVec: Pt): number | null {
+  const dLen = Math.hypot(dipDirVec.x, dipDirVec.y), sLen = Math.hypot(sectionDirVec.x, sectionDirVec.y);
+  if (dLen < 1e-9 || sLen < 1e-9) return null;
+  const cosA = (dipDirVec.x * sectionDirVec.x + dipDirVec.y * sectionDirVec.y) / (dLen * sLen);
+  const trueDipRad = (trueDipDeg * Math.PI) / 180;
+  return (Math.atan(Math.tan(trueDipRad) * cosA) * 180) / Math.PI;
+}
+
+/**
  * The apparent throw at a fault: each side's own control points are gridded
  * (independently) to a value at the trace's midpoint, and the two are
  * subtracted. This is DERIVED from whatever picks exist on each side rather

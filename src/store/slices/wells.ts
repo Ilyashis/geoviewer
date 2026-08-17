@@ -5,7 +5,7 @@ import type { SurveyRow } from '../../survey/csv';
 import type { WellHeadRow } from '../../wells/heads';
 import { parseDev, type ParsedDev } from '../../wells/dev';
 import { parseCheckshots } from '../../wells/checkshot';
-import { segyToLine } from '../../seismic/segy';
+import { segyToLine, segyToVolume, scanSegyHeaders, isSegyVolume } from '../../seismic/segy';
 import { readTextFile } from '../../util/encoding';
 import type { SurveyStation } from '../../wells/deviation';
 import { parseLasToWell } from '../../las/parser';
@@ -13,6 +13,7 @@ import { generateDemoLithology } from '../../plate/demoLithology';
 import { mapLithology, mapSaturation } from '../../lithology/map';
 import { buildDemoLas } from '../../sampleData';
 import { uid } from '../../util/id';
+import { seedMarkerDepths } from '../../wells/seed';
 import { DEMO_TOPS, demoSurvey, norm, wellIndex } from '../shared';
 import type { Store } from '../types';
 
@@ -41,6 +42,13 @@ export interface DevImportSummary {
   unmatchedWells: string[];
 }
 
+export interface KbImportSummary {
+  wells: number;
+  /** Wells that already carried a different elevation, now overwritten. */
+  replaced: { well: string; was: number }[];
+  unmatchedWells: string[];
+}
+
 export interface WellsSlice {
   wells: Well[];
   activeWellId: string | null;
@@ -58,6 +66,7 @@ export interface WellsSlice {
   importSurveys: (rows: SurveyRow[]) => SurveyImportSummary;
   importWellHeads: (rows: WellHeadRow[]) => HeadsImportSummary;
   importDevTraces: (traces: ParsedDev[]) => DevImportSummary;
+  importWellKb: (rows: { well: string; kb: number }[]) => KbImportSummary;
 }
 
 export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, get) => ({
@@ -95,10 +104,17 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
       if (parsed.length) get().setCheckshots(parsed);
     }
 
-    // SEG-Y lines — read as binary, shown as their own sections.
+    // SEG-Y — a cheap header-only scan first decides line vs. volume, since a
+    // full 3D survey and a 2D line need entirely different readers (segyToLine
+    // treats every trace as one line; a volume needs the inline/crossline grid).
     for (const file of all.filter(isSegy)) {
       try {
-        get().addSegyLine(segyToLine(await file.arrayBuffer(), file.name));
+        const buf = await file.arrayBuffer();
+        if (isSegyVolume(scanSegyHeaders(buf))) {
+          get().addSegyVolume(segyToVolume(buf, file.name));
+        } else {
+          get().addSegyLine(segyToLine(buf, file.name));
+        }
       } catch (e) {
         set({ error: `Не удалось прочитать ${file.name}: ${(e as Error).message}` });
       }
@@ -145,13 +161,28 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
             color: t.color,
             depths: { [well.id]: t.base },
           }));
-        } else if (markers.length) {
-          // Extend existing markers to the newly added well (stepped depth).
+        } else if (markers.length && isDemo) {
+          // The curated demo builds a deliberate staircase across its
+          // synthetic field — a fixed per-marker step, not a real seed.
           markers = markers.map((m, i) => {
             const existing = Object.values(m.depths);
             const base = existing.length ? Math.max(...existing) : 2050;
-            const step = isDemo ? (DEMO_TOPS[i]?.step ?? 6) : 6;
-            return { ...m, depths: { ...m.depths, [well.id]: base + step } };
+            return { ...m, depths: { ...m.depths, [well.id]: base + (DEMO_TOPS[i]?.step ?? 6) } };
+          });
+        } else if (markers.length) {
+          // A real well joining an already-picked field: seed each marker
+          // from its nearest neighbour's TVDSS (see wells/seed) rather than
+          // an arbitrary constant offset, which had no relation to this
+          // well's position, KB or trajectory at all.
+          markers = markers.map((m) => {
+            const proposed = seedMarkerDepths(wells, m.depths);
+            const outcome = proposed[well.id];
+            if (!outcome) return m;
+            return {
+              ...m,
+              depths: { ...m.depths, [well.id]: outcome.depth },
+              seeded: [...(m.seeded ?? []), well.id],
+            };
           });
         }
 
@@ -181,7 +212,7 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
         ? []
         : s.markers.map((m) => {
             const { [id]: _removed, ...rest } = m.depths;
-            return { ...m, depths: rest };
+            return { ...m, depths: rest, seeded: m.seeded?.filter((wid) => wid !== id) };
           });
       return {
         wells,
@@ -319,5 +350,38 @@ export const createWellsSlice: StateCreator<Store, [], [], WellsSlice> = (set, g
 
     set({ wells });
     return { wells: patch.size, withKb, deviated, unmatchedWells: [...unmatched] };
+  },
+
+  /**
+   * Apply a depth-reference elevation on its own, from a file that carries no
+   * coordinates — an inclinometry report names its datum in the preamble and is
+   * often the only place it appears. Kept separate from `importWellHeads`,
+   * which would blank X/Y it has nothing to say about.
+   *
+   * An elevation that was already known is replaced rather than kept, because
+   * the caller asked for this file to be applied — but the previous value is
+   * reported back so the change is never silent.
+   */
+  importWellKb: (rows) => {
+    const state = get();
+    const byName = wellIndex(state.wells);
+    const patch = new Map<string, number>();
+    const unmatched = new Set<string>();
+    for (const r of rows) {
+      const wellId = byName.get(norm(r.well));
+      if (!wellId) { unmatched.add(r.well); continue; }
+      if (Number.isFinite(r.kb)) patch.set(wellId, r.kb);
+    }
+
+    const replaced: { well: string; was: number }[] = [];
+    const wells = state.wells.map((w) => {
+      const kb = patch.get(w.id);
+      if (kb === undefined) return w;
+      if (w.kb !== undefined && Math.abs(w.kb - kb) > 0.01) replaced.push({ well: w.name, was: w.kb });
+      return { ...w, kb };
+    });
+
+    set({ wells });
+    return { wells: patch.size, replaced, unmatchedWells: [...unmatched] };
   },
 });

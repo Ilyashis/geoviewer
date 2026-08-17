@@ -1,20 +1,25 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { Navigation } from 'lucide-react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { Navigation, Download } from 'lucide-react';
 import type { Marker, Well } from '../types';
 import { contourLevels } from '../core/geom/grid';
 import type { Pt } from '../core/geom/polygon';
 import { estimateThrow } from '../core/geom/fault';
 import { buildSurface, type ControlPoint } from '../core/framework';
-import { tvdss } from '../core/crs';
+import { clusterPoints, clusterGap } from '../core/geom/cluster';
+import { SurfacePicker } from './SurfacePicker';
 import { useStore } from '../store';
-import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../wells/deviation';
+import type { FaultDef } from '../store/slices/framework';
+import { computeTrajectory, positionAtMd, type TrajPoint } from '../wells/deviation';
 import { metricWells } from '../wells/coords';
+import { tvdssAt as tvdssAtOf, posAt as posAtOf, structuralControlPoints } from '../wells/structure';
+import { useConfirm } from '../hooks/useConfirm';
 import { marchingSquares } from '../core/geom/contours';
 import { volumetrics, DEFAULT_VOL_PARAMS, type VolParams, type Contact } from '../reserves/volumetrics';
 import { aggregateZone, DEFAULT_PETRO, type PetroParams } from '../wells/petrophysics';
 import { monteCarlo, makeTriParams } from '../reserves/uncertainty';
 import { buildReservesCsv, renderReservesJpeg, type ReservesInput } from '../export/reserves';
 import { jpegToPdf } from '../export/pdf';
+import { buildZmapGrid } from '../export/zmap';
 import { downloadText, triggerDownload } from '../export/download';
 import { FileText, Table } from 'lucide-react';
 
@@ -23,6 +28,12 @@ interface Props {
   markers: Marker[];
   activeWellId: string | null;
   onActivate: (id: string) => void;
+  /** Current zoom, as a percentage (null = default/fit) — for the app footer. */
+  onZoomChange?: (pct: number | null) => void;
+}
+
+export interface WellMapHandle {
+  resetView: () => void;
 }
 
 const PAD = 64;
@@ -37,8 +48,6 @@ const PHI_METHOD_RU: Record<string, string> = {
 };
 
 interface Pos { id: string; name: string; x: number; y: number }
-/** A fault trace and the пласты its plane cuts (usually all of them). */
-interface FaultDef { id: string; label: string; markerIds: string[]; trace: Pt[] }
 
 /** Two-hue ramp, low→high value. */
 const RAMP: [number, number, number][] = [
@@ -60,11 +69,18 @@ interface Field {
 }
 
 /** Plan-view map: wells, profile, and a gridded surface (structure or isochore). */
-export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
+export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
+  { wells, markers, activeWellId, onActivate, onZoomChange }, ref,
+) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [mode, setMode] = useState<Mode>('structure');
+  // The surface-picker tab needs a mappable пласт to mean anything; when
+  // there isn't one yet, "Разрезы" is the only tab with content, regardless
+  // of which one the user last had open.
+  const [panelTab, setPanelTab] = useState<'surface' | 'faults' | 'sections'>('surface');
   const [surfaceId, setSurfaceId] = useState<string | null>(null);
   const [topId, setTopId] = useState<string | null>(null);
   const [baseId, setBaseId] = useState<string | null>(null);
@@ -75,16 +91,31 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   const [owc, setOwc] = useState(0);
   const [pinchOn, setPinchOn] = useState(false);
   const [pinchPts, setPinchPts] = useState<Pt[]>([]);
+  const { confirm, dialog } = useConfirm();
   const [drawingPinch, setDrawingPinch] = useState(false);
   const pinchDragRef = useRef<number | null>(null);
-  const [faults, setFaults] = useState<FaultDef[]>([]);
+  // Разломы живут в сторе: вкладки монтируются по одной, и локальное состояние
+  // пропадало при уходе с карты. Их же рисует 3D-сцена.
+  const faults = useStore((s) => s.faults);
+  const setFaults = useStore((s) => s.setFaults);
   const [draftFault, setDraftFault] = useState<Pt[]>([]);
   const [draftFaultMarkerIds, setDraftFaultMarkerIds] = useState<string[]>([]);
   const [drawingFault, setDrawingFault] = useState(false);
   const faultDragRef = useRef<{ faultId: string; idx: number } | null>(null);
-  const faultSeqRef = useRef(0);
+  // Same reasoning as faults: the cross-section tab is a separately mounted
+  // view and needs the line to still be there when it looks.
+  const sections = useStore((s) => s.sections);
+  const setSections = useStore((s) => s.setSections);
+  const [draftSection, setDraftSection] = useState<Pt[]>([]);
+  const [drawingSection, setDrawingSection] = useState(false);
+  const sectionDragRef = useRef<{ sectionId: string; idx: number } | null>(null);
   const [uncOn, setUncOn] = useState(false);
   const [spread, setSpread] = useState(20);
+  // Zoom/pan on top of the fit-to-view `layout` below — applied identically
+  // to the canvas raster (ctx transform) and the SVG overlay (<g transform>)
+  // so the two layers never drift apart.
+  const [pan, setPan] = useState({ x: 0, y: 0, k: 1 });
+  const panDragRef = useRef<{ pointerId: number; startX: number; startY: number; startPanX: number; startPanY: number; moved: boolean } | null>(null);
 
   // Project any lon/lat wells to metres first — everything below (gridding,
   // areas, volumes, distances) assumes a metric frame.
@@ -107,6 +138,11 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     );
   }, [markers, coordWells, schematic]);
 
+  const surfOptions = useMemo(
+    () => mappable.map((m) => ({ id: m.id, label: m.label, color: m.color })),
+    [mappable],
+  );
+
   const surface = mappable.find((m) => m.id === surfaceId) ?? mappable[0] ?? null;
   const top = mappable.find((m) => m.id === topId) ?? mappable[0] ?? null;
   const base = mappable.find((m) => m.id === baseId) ?? mappable.find((m) => m.id !== top?.id) ?? null;
@@ -118,25 +154,13 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     return m;
   }, [coordWells]);
   const anyDeviated = trajs.size > 0;
-  const tvdssAt = (w: Well, md: number) => tvdss(tvdAtMd(trajs.get(w.id) ?? [], md), w.kb);
-  const posAt = (w: Well, md: number) => {
-    const p = positionAtMd(trajs.get(w.id) ?? [], md);
-    return { x: w.x! + p.east, y: w.y! + p.north };
-  };
+  const tvdssAt = (w: Well, md: number) => tvdssAtOf(trajs, w, md);
+  const posAt = (w: Well, md: number) => posAtOf(trajs, w, md);
 
   // Raw structure control points for a marker, independent of the current
   // view/mode — a fault's throw is a property of the horizon it's tied to, so
   // it shouldn't shift just because the user switched tabs.
-  const structurePointsFor = (marker: Marker): ControlPoint[] => {
-    const points: ControlPoint[] = [];
-    for (const w of coordWells) {
-      const md = marker.depths[w.id];
-      if (!Number.isFinite(md)) continue;
-      const pos = posAt(w, md);
-      points.push({ x: pos.x, y: pos.y, z: tvdssAt(w, md) });
-    }
-    return points;
-  };
+  const structurePointsFor = (marker: Marker): ControlPoint[] => structuralControlPoints(marker, coordWells, trajs);
 
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   // Seismic-derived horizon control points for the selected structure surface,
@@ -236,6 +260,32 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   );
   const grid = builtSurface?.grid ?? null;
 
+  /**
+   * Wells that don't belong to one field. The grid leaves unreachable cells
+   * blank, so a stray well — a leftover demo point, or two fields dropped in
+   * together — stretches the mesh over mostly nothing and the map looks broken.
+   * Naming the split turns that into a diagnosis.
+   *
+   * Deliberately clusters `coordWells`, not `field.points`: the latter also
+   * carries a seismic horizon's control points once one's been sent to the
+   * map (`seismicControls`, folded into `field` below), and those arrive as
+   * hundreds of points densely spaced along the line. Mixed into the same
+   * "typical spacing" statistic this warning is built on, that dense cluster
+   * makes a perfectly normal well layout register as scattered — and the
+   * message says "Скважины" (wells), which stops being true the moment
+   * non-well points are part of what got clustered. A field-wide, mode- and
+   * surface-independent well set keeps the label honest and the warning from
+   * flickering with whatever surface happens to be selected.
+   */
+  const scatterNote = useMemo(() => {
+    const pts: ControlPoint[] = coordWells.map((w) => ({ x: w.x!, y: w.y!, z: 0 }));
+    if (pts.length < 3) return null;
+    const cl = clusterPoints(pts);
+    if (cl.length < 2) return null;
+    const gapKm = Math.min(...cl.slice(1).map((c) => clusterGap(cl[0], c))) / 1000;
+    return { groups: cl.length, main: cl[0].members.length, apart: pts.length - cl[0].members.length, gapKm };
+  }, [coordWells]);
+
   // Top-surface structure (TVDSS) on the same mesh — depths for the OWC clip.
   const topGrid = useMemo(() => {
     if (mode !== 'isochore' || !top || !gridGeom) return null;
@@ -266,6 +316,9 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.w, size.h);
     if (!grid || !field) return;
+    // Pan/zoom applied here so every coordinate below (still plain toPx output,
+    // unaware of pan/zoom) lands in the right place without being rewritten.
+    ctx.setTransform(dpr * pan.k, 0, 0, dpr * pan.k, dpr * pan.x, dpr * pan.y);
 
     const { vmin, vmax } = field;
     const vt = (v: number) => (vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5);
@@ -275,9 +328,11 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     ctx.globalAlpha = 0.82;
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
+        const v = grid.z[j * nx + i];
+        if (!Number.isFinite(v)) continue; // вне досягаемости данных — не закрашиваем
         const x = minX + i * dx, y = minY + j * dy;
         const p = toPx(x, y), p2 = toPx(x + dx, y - dy);
-        ctx.fillStyle = rampColor(vt(grid.z[j * nx + i]));
+        ctx.fillStyle = rampColor(vt(v));
         ctx.fillRect(p.px - 0.5, p.py - 0.5, p2.px - p.px + 1, p2.py - p.py + 1);
       }
     }
@@ -318,7 +373,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       }
       ctx.stroke();
     }
-  }, [grid, field, layout, size, contact]);
+  }, [grid, field, layout, size, contact, pan]);
 
   // Log-derived net-pay stats for the isochore zone [top, base] across the mapped wells.
   const logStats = useMemo(() => {
@@ -422,6 +477,10 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     const img = renderReservesJpeg(r);
     triggerDownload(`reserves-${fileStamp()}.pdf`, URL.createObjectURL(jpegToPdf(img.dataUrl, img.width, img.height)), true);
   };
+  const exportZmap = () => {
+    if (!grid || !surface) return;
+    downloadText(`${surface.label}-${fileStamp()}.dat`, buildZmapGrid(grid, surface.label), 'text/plain');
+  };
 
   // --- Pinch-out polygon: click-to-place vertices, then drag any of them ---
   // Checking the box keeps an already-drawn polygon (like the ВНК depth persists
@@ -450,10 +509,12 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     setDraftFaultMarkerIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
   const finishFaultDraw = () => {
     if (draftFault.length < 2 || draftFaultMarkerIds.length === 0) return;
-    faultSeqRef.current += 1;
+    // Номер берётся из уже существующих разломов: счётчик в компоненте
+    // обнулялся бы при возврате на вкладку и выдавал дубли id.
+    const n = faults.reduce((mx, f) => Math.max(mx, Number(f.id.replace(/\D/g, '')) || 0), 0) + 1;
     setFaults((fs) => [...fs, {
-      id: `fault-${faultSeqRef.current}`,
-      label: `Разлом ${faultSeqRef.current}`,
+      id: `fault-${n}`,
+      label: `Разлом ${n}`,
       markerIds: mappable.filter((m) => draftFaultMarkerIds.includes(m.id)).map((m) => m.id), // keep пласт order
       trace: draftFault,
     }]);
@@ -462,13 +523,37 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
   };
   const cancelFaultDraw = () => { setDrawingFault(false); setDraftFault([]); setDraftFaultMarkerIds([]); };
   const removeFault = (id: string) => setFaults((fs) => fs.filter((f) => f.id !== id));
+  // Dip has no picks to derive it from (unlike throw) — it's the one fault
+  // property typed in directly. Blank clears it back to "unknown/vertical".
+  const setFaultDip = (id: string, dip: number | undefined) =>
+    setFaults((fs) => fs.map((f) => (f.id === id ? { ...f, dip } : f)));
 
+  // --- Section lines: same open-polyline pattern as faults, no marker gating ---
+  const startSectionDraw = () => { setDrawingSection(true); setDraftSection([]); setDrawingPinch(false); setDrawingFault(false); };
+  const finishSectionDraw = () => {
+    if (draftSection.length < 2) return;
+    const n = sections.reduce((mx, s) => Math.max(mx, Number(s.id.replace(/\D/g, '')) || 0), 0) + 1;
+    setSections((ss) => [...ss, { id: `section-${n}`, label: `Разрез ${n}`, points: draftSection }]);
+    setDrawingSection(false);
+    setDraftSection([]);
+  };
+  const cancelSectionDraw = () => { setDrawingSection(false); setDraftSection([]); };
+  const removeSection = (id: string) => setSections((ss) => ss.filter((s) => s.id !== id));
+
+  // Screen (client) px → world coords: undo pan/zoom first, then the
+  // fit-to-view layout, since `layout.toPx` output is what pan/zoom transforms.
+  const toWorld = (clientX: number, clientY: number, rect: DOMRect): Pt | null => {
+    if (!layout) return null;
+    return layout.fromPx((clientX - rect.left - pan.x) / pan.k, (clientY - rect.top - pan.y) / pan.k);
+  };
+
+  const MIN_K = 0.4, MAX_K = 16, PAN_CLICK_SLOP = 4;
+
+  // A background pointerdown might be the start of a click (place a draft
+  // vertex while drawing) or a drag-to-pan — resolved by movement, on pointerup.
   const svgDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!layout) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pt = layout.fromPx(e.clientX - rect.left, e.clientY - rect.top);
-    if (drawingPinch) { setPinchPts((pts) => [...pts, pt]); return; }
-    if (drawingFault) { setDraftFault((pts) => [...pts, pt]); return; }
+    panDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, startPanX: pan.x, startPanY: pan.y, moved: false };
   };
   const vertexDown = (i: number) => (e: ReactPointerEvent<SVGCircleElement>) => {
     e.stopPropagation();
@@ -480,20 +565,77 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     faultDragRef.current = { faultId, idx };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
+  const sectionVertexDown = (sectionId: string, idx: number) => (e: ReactPointerEvent<SVGCircleElement>) => {
+    e.stopPropagation();
+    sectionDragRef.current = { sectionId, idx };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
   const svgMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!layout) return;
-    if (pinchDragRef.current == null && faultDragRef.current == null) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pt = layout.fromPx(e.clientX - rect.left, e.clientY - rect.top);
-    if (pinchDragRef.current != null) {
-      const idx = pinchDragRef.current;
-      setPinchPts((pts) => pts.map((p, k) => (k === idx ? pt : p)));
-    } else if (faultDragRef.current != null) {
-      const { faultId, idx } = faultDragRef.current;
-      setFaults((fs) => fs.map((f) => (f.id === faultId ? { ...f, trace: f.trace.map((p, k) => (k === idx ? pt : p)) } : f)));
+    if (pinchDragRef.current != null || faultDragRef.current != null || sectionDragRef.current != null) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const pt = toWorld(e.clientX, e.clientY, rect);
+      if (!pt) return;
+      if (pinchDragRef.current != null) {
+        const idx = pinchDragRef.current;
+        setPinchPts((pts) => pts.map((p, k) => (k === idx ? pt : p)));
+      } else if (faultDragRef.current != null) {
+        const { faultId, idx } = faultDragRef.current;
+        setFaults((fs) => fs.map((f) => (f.id === faultId ? { ...f, trace: f.trace.map((p, k) => (k === idx ? pt : p)) } : f)));
+      } else if (sectionDragRef.current != null) {
+        const { sectionId, idx } = sectionDragRef.current;
+        setSections((ss) => ss.map((s) => (s.id === sectionId ? { ...s, points: s.points.map((p, k) => (k === idx ? pt : p)) } : s)));
+      }
+      return;
     }
+    const drag = panDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
+    if (Math.abs(dx) > PAN_CLICK_SLOP || Math.abs(dy) > PAN_CLICK_SLOP) drag.moved = true;
+    if (drag.moved) setPan((p) => ({ ...p, x: drag.startPanX + dx, y: drag.startPanY + dy }));
   };
-  const svgUp = () => { pinchDragRef.current = null; faultDragRef.current = null; };
+  const svgUp = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (pinchDragRef.current != null || faultDragRef.current != null || sectionDragRef.current != null) {
+      pinchDragRef.current = null; faultDragRef.current = null; sectionDragRef.current = null;
+      return;
+    }
+    const drag = panDragRef.current;
+    panDragRef.current = null;
+    if (!drag || drag.pointerId !== e.pointerId || drag.moved || !layout) return;
+    // Not a pan — a plain click. Same three draw modes as before.
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pt = toWorld(e.clientX, e.clientY, rect);
+    if (!pt) return;
+    if (drawingPinch) { setPinchPts((pts) => [...pts, pt]); return; }
+    if (drawingFault) { setDraftFault((pts) => [...pts, pt]); return; }
+    if (drawingSection) { setDraftSection((pts) => [...pts, pt]); return; }
+  };
+  const resetView = () => setPan({ x: 0, y: 0, k: 1 });
+  useImperativeHandle(ref, () => ({ resetView }), []);
+  useEffect(() => {
+    onZoomChange?.(pan.k !== 1 || pan.x !== 0 || pan.y !== 0 ? Math.round(pan.k * 100) : null);
+  }, [pan, onZoomChange]);
+
+  // React's onWheel is registered passive at the root, so preventDefault()
+  // inside a synthetic handler throws — a plain DOM listener is required to
+  // stop the page from scrolling while zooming the map.
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el || !layout) return;
+    const onWheelNative = (e: globalThis.WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      setPan((p) => {
+        const k = Math.min(MAX_K, Math.max(MIN_K, p.k * factor));
+        const f = k / p.k;
+        return { k, x: mx - (mx - p.x) * f, y: my - (my - p.y) * f };
+      });
+    };
+    el.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', onWheelNative);
+  }, [layout]);
 
   if (wells.length === 0) {
     return (
@@ -506,6 +648,7 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     );
   }
 
+  const activeTab = mappable.length > 0 ? panelTab : 'sections';
   const pts = layout?.pts ?? [];
   const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`).join(' ');
 
@@ -538,23 +681,18 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
     ? faults.map((f) => ({ id: f.id, pts: f.trace.map((p) => layout.toPx(p.x, p.y)), active: activeFaults.some((af) => af.id === f.id) }))
     : [];
   const draftFaultScreenPts = layout ? draftFault.map((p) => layout.toPx(p.x, p.y)) : [];
-
-  const SurfBtns = ({ selId, onSel }: { selId: string | undefined; onSel: (id: string) => void }) => (
-    <>
-      {mappable.map((m) => (
-        <button key={m.id} className={`map-surf ${m.id === selId ? 'on' : ''}`} onClick={() => onSel(m.id)}>
-          <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
-        </button>
-      ))}
-    </>
-  );
+  const sectionScreenLines = layout
+    ? sections.map((s) => ({ id: s.id, pts: s.points.map((p) => layout.toPx(p.x, p.y)) }))
+    : [];
+  const draftSectionScreenPts = layout ? draftSection.map((p) => layout.toPx(p.x, p.y)) : [];
 
   return (
     <div className="map" ref={wrapRef}>
       <canvas ref={canvasRef} className="map-canvas" style={{ width: size.w, height: size.h }} />
-      <svg className="map-svg" width={size.w} height={size.h}
-        style={{ cursor: drawingPinch || drawingFault ? 'crosshair' : undefined }}
+      <svg ref={svgRef} className="map-svg" width={size.w} height={size.h}
+        style={{ cursor: drawingPinch || drawingFault || drawingSection ? 'crosshair' : 'grab' }}
         onPointerDown={svgDown} onPointerMove={svgMove} onPointerUp={svgUp}>
+      <g transform={`translate(${pan.x} ${pan.y}) scale(${pan.k})`}>
         {pinchOn && pinchScreenPts.length > 0 && (
           <g className="map-pinch">
             {pinchClosed && (
@@ -578,6 +716,17 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
         ))}
         {drawingFault && draftFaultScreenPts.length > 0 && (
           <path d={toPath(draftFaultScreenPts)} fill="none" className="map-fault-line draft" />
+        )}
+        {sectionScreenLines.map(({ id, pts }) => (
+          <g key={id} className="map-section">
+            <path d={toPath(pts)} fill="none" className="map-section-line" />
+            {pts.map((p, i) => (
+              <circle key={i} cx={p.px} cy={p.py} r={6} className="map-section-vertex" onPointerDown={sectionVertexDown(id, i)} />
+            ))}
+          </g>
+        ))}
+        {drawingSection && draftSectionScreenPts.length > 0 && (
+          <path d={toPath(draftSectionScreenPts)} fill="none" className="map-section-line draft" />
         )}
         {pts.length > 1 && (
           <path d={path} fill="none" stroke="var(--accent)" strokeWidth={2} strokeOpacity={0.75}
@@ -609,97 +758,160 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             </g>
           );
         })}
+      </g>
       </svg>
 
-      {mappable.length > 0 && (
+      {/* Разлому нужны пласты, чтобы было что сечь; разрезу — только координаты
+          скважин. mappable > 0 implies !schematic && coordWells > 0 (mappable
+          is forced empty whenever schematic), so this one condition covers
+          "is there anything at all for this panel to show". Пласт/Разломы
+          tabs are gated on mappable the same way the old separate panels were. */}
+      {!schematic && coordWells.length > 0 && (
         <div className="map-panel">
-          <div className="map-mode">
-            <button className={`map-mode-btn ${mode === 'structure' ? 'on' : ''}`} onClick={() => setMode('structure')}>Структура</button>
-            <button className={`map-mode-btn ${mode === 'isochore' ? 'on' : ''}`} onClick={() => setMode('isochore')}
-              disabled={mappable.length < 2}>Изохора</button>
+          <div className="map-tabs">
+            {mappable.length > 0 && (
+              <button className={`map-tab-btn ${activeTab === 'surface' ? 'on' : ''}`} onClick={() => setPanelTab('surface')}>
+                Пласт
+              </button>
+            )}
+            {mappable.length > 0 && (
+              <button className={`map-tab-btn ${activeTab === 'faults' ? 'on' : ''}`} onClick={() => setPanelTab('faults')}>
+                Разломы{faults.length > 0 ? ` ${faults.length}` : ''}
+              </button>
+            )}
+            <button className={`map-tab-btn ${activeTab === 'sections' ? 'on' : ''}`} onClick={() => setPanelTab('sections')}>
+              Разрезы{sections.length > 0 ? ` ${sections.length}` : ''}
+            </button>
           </div>
-          {mode === 'structure' ? (
-            <div className="map-surf-row">
-              <span className="map-row-label">Пласт</span>
-              <SurfBtns selId={surface?.id} onSel={setSurfaceId} />
-            </div>
-          ) : (
+
+          {activeTab === 'surface' && mappable.length > 0 && (
             <>
-              <div className="map-surf-row">
-                <span className="map-row-label">Кровля</span>
-                <SurfBtns selId={top?.id} onSel={setTopId} />
+              <div className="map-mode">
+                <button className={`map-mode-btn ${mode === 'structure' ? 'on' : ''}`} onClick={() => setMode('structure')}>Структура</button>
+                <button className={`map-mode-btn ${mode === 'isochore' ? 'on' : ''}`} onClick={() => setMode('isochore')}
+                  disabled={mappable.length < 2}>Изохора</button>
               </div>
-              <div className="map-surf-row">
-                <span className="map-row-label">Подошва</span>
-                <SurfBtns selId={base?.id} onSel={setBaseId} />
-              </div>
+              {mode === 'structure' ? (
+                <>
+                  <SurfacePicker label="Пласт" options={surfOptions} value={surface?.id} onChange={setSurfaceId} />
+                  <button className="map-export-btn" disabled={!grid} onClick={exportZmap} title="Экспорт грида в формате Petrel (ZMAP+)">
+                    <Download size={13} strokeWidth={1.75} /> Грид (ZMAP+)
+                  </button>
+                </>
+              ) : (
+                <>
+                  <SurfacePicker label="Кровля" options={surfOptions} value={top?.id} onChange={setTopId} />
+                  <SurfacePicker label="Подошва" options={surfOptions} value={base?.id} onChange={setBaseId} />
+                </>
+              )}
             </>
           )}
-        </div>
-      )}
 
-      {mappable.length > 0 && (
-        <div className="map-fault-panel">
-          <div className="map-fault-head">
-            <span>Разломы</span>
-            <button className="map-fault-add" disabled={drawingFault} onClick={startFaultDraw}>+ разлом</button>
-          </div>
-          {drawingFault && (
-            <div className="map-fault-marker-pick">
-              <div className="map-fault-pick-h">
-                <span>Сечёт пласты</span>
-                <button className="map-fault-all"
-                  onClick={() => setDraftFaultMarkerIds(draftFaultMarkerIds.length === mappable.length ? [] : mappable.map((m) => m.id))}>
-                  {draftFaultMarkerIds.length === mappable.length ? 'снять все' : 'все'}
-                </button>
+          {activeTab === 'faults' && mappable.length > 0 && (
+            <>
+              <div className="map-fault-head">
+                <span>Разломы</span>
+                <button className="map-fault-add" disabled={drawingFault} onClick={startFaultDraw}>+ разлом</button>
               </div>
-              <div className="map-surf-row">
-                {mappable.map((m) => (
-                  <button key={m.id} className={`map-surf ${draftFaultMarkerIds.includes(m.id) ? 'on' : ''}`}
-                    onClick={() => toggleDraftMarker(m.id)}>
-                    <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {faults.length === 0 ? (
-            <div className="map-fault-empty">Нет разломов</div>
-          ) : (
-            faults.map((f) => {
-              const t = throwAtView(f);
-              const cut = mappable.filter((m) => f.markerIds.includes(m.id));
-              const isActive = activeFaults.some((af) => af.id === f.id);
-              const cutLabel = cut.length === mappable.length ? 'все' : cut.map((m) => m.label).join(', ');
-              // Per-пласт throws, so the numbers behind a single displayed value stay inspectable.
-              const perMarker = cut
-                .map((m) => `${m.label}: ${faultThrows[f.id]?.[m.id] == null ? '—' : `${Math.round(Math.abs(faultThrows[f.id][m.id]!))} м`}`)
-                .join('\n');
-              return (
-                <div key={f.id} className={`map-fault-row ${isActive ? '' : 'inactive'}`}
-                  title={`${f.label} · сечёт: ${cutLabel}\n${perMarker}${isActive ? '' : '\n\n(не влияет на текущий вид)'}`}>
-                  <span className="map-fault-dot" />
-                  <span className="map-fault-label">{f.label} · {cutLabel}</span>
-                  <span className="map-fault-throw">{t == null ? '—' : `${Math.round(Math.abs(t))} м`}</span>
-                  <button className="map-fault-del" title="Удалить разлом" onClick={() => removeFault(f.id)}>×</button>
+              {drawingFault && (
+                <div className="map-fault-marker-pick">
+                  <div className="map-fault-pick-h">
+                    <span>Сечёт пласты</span>
+                    <button className="map-fault-all"
+                      onClick={() => setDraftFaultMarkerIds(draftFaultMarkerIds.length === mappable.length ? [] : mappable.map((m) => m.id))}>
+                      {draftFaultMarkerIds.length === mappable.length ? 'снять все' : 'все'}
+                    </button>
+                  </div>
+                  <div className="map-surf-row">
+                    {mappable.map((m) => (
+                      <button key={m.id} className={`map-surf ${draftFaultMarkerIds.includes(m.id) ? 'on' : ''}`}
+                        onClick={() => toggleDraftMarker(m.id)}>
+                        <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              );
-            })
+              )}
+              {faults.length === 0 ? (
+                <div className="map-fault-empty">Нет разломов</div>
+              ) : (
+                faults.map((f) => {
+                  const t = throwAtView(f);
+                  const cut = mappable.filter((m) => f.markerIds.includes(m.id));
+                  const isActive = activeFaults.some((af) => af.id === f.id);
+                  const cutLabel = cut.length === mappable.length ? 'все' : cut.map((m) => m.label).join(', ');
+                  // Per-пласт throws, so the numbers behind a single displayed value stay inspectable.
+                  const perMarker = cut
+                    .map((m) => `${m.label}: ${faultThrows[f.id]?.[m.id] == null ? '—' : `${Math.round(Math.abs(faultThrows[f.id][m.id]!))} м`}`)
+                    .join('\n');
+                  return (
+                    <div key={f.id} className={`map-fault-row ${isActive ? '' : 'inactive'}`}
+                      title={`${f.label} · сечёт: ${cutLabel}\n${perMarker}${isActive ? '' : '\n\n(не влияет на текущий вид)'}`}>
+                      <span className="map-fault-dot" />
+                      <span className="map-fault-label">{f.label} · {cutLabel}</span>
+                      <span className="map-fault-throw">{t == null ? '—' : `${Math.round(Math.abs(t))} м`}</span>
+                      <input
+                        className="map-fault-dip" type="number" min={1} max={89} placeholder="90°"
+                        title="Угол падения, ° от горизонтали — не вычисляется из пикетов, вводится вручную"
+                        value={f.dip ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value === '' ? undefined : Math.max(1, Math.min(89, Number(e.target.value)));
+                          setFaultDip(f.id, Number.isFinite(v as number) ? v : undefined);
+                        }}
+                      />
+                      <button className="map-fault-del" title="Удалить разлом" onClick={() => confirm({
+                        title: `Удалить «${f.label}»?`,
+                        message: 'Трасса, угол падения и привязка к пластам этого разлома будут удалены без возможности восстановления.',
+                        onConfirm: () => removeFault(f.id),
+                      })}>×</button>
+                    </div>
+                  );
+                })
+              )}
+            </>
+          )}
+
+          {activeTab === 'sections' && (
+            <>
+              <div className="map-fault-head">
+                <span>Разрезы</span>
+                <button className="map-fault-add" disabled={drawingSection} onClick={startSectionDraw}>+ разрез</button>
+              </div>
+              {sections.length === 0 ? (
+                <div className="map-fault-empty">Нет линий разреза</div>
+              ) : (
+                sections.map((s) => (
+                  <div key={s.id} className="map-fault-row" title={`${s.label} · ${s.points.length} точек`}>
+                    <span className="map-section-dot" />
+                    <span className="map-fault-label">{s.label}</span>
+                    <button className="map-fault-del" title="Удалить разрез" onClick={() => confirm({
+                      title: `Удалить «${s.label}»?`,
+                      message: 'Линия разреза будет удалена без возможности восстановления.',
+                      onConfirm: () => removeSection(s.id),
+                    })}>×</button>
+                  </div>
+                ))
+              )}
+            </>
           )}
         </div>
       )}
 
       <div className={`map-north ${volResult && field ? 'aside' : ''}`}><Navigation size={16} strokeWidth={1.9} /> С</div>
 
-      {(drawingPinch || drawingFault) && (
+      {(drawingPinch || drawingFault || drawingSection) && (
         <div className="map-draw-hint">
           <span>{drawingPinch
             ? 'Кликайте по карте, чтобы поставить точки контура выклинивания'
+            : drawingSection
+            ? 'Кликайте по карте, чтобы поставить точки линии разреза'
             : 'Кликайте по карте, чтобы поставить точки трассы разлома'}</span>
-          <b>{(drawingPinch ? pinchPts.length : draftFault.length)} точ.</b>
-          <button className="map-draw-btn on" disabled={drawingPinch ? pinchPts.length < 3 : (draftFault.length < 2 || draftFaultMarkerIds.length === 0)}
-            onClick={drawingPinch ? finishPinchDraw : finishFaultDraw}>Готово</button>
-          <button className="map-draw-btn" onClick={drawingPinch ? cancelPinchDraw : cancelFaultDraw}>Отмена</button>
+          <b>{(drawingPinch ? pinchPts.length : drawingSection ? draftSection.length : draftFault.length)} точ.</b>
+          <button className="map-draw-btn on"
+            disabled={drawingPinch ? pinchPts.length < 3 : drawingSection ? draftSection.length < 2 : (draftFault.length < 2 || draftFaultMarkerIds.length === 0)}
+            onClick={drawingPinch ? finishPinchDraw : drawingSection ? finishSectionDraw : finishFaultDraw}>Готово</button>
+          <button className="map-draw-btn"
+            onClick={drawingPinch ? cancelPinchDraw : drawingSection ? cancelSectionDraw : cancelFaultDraw}>Отмена</button>
         </div>
       )}
 
@@ -716,6 +928,13 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
             {pinchClip && <div className="map-leg-row"><span className="map-leg-pinch" /> выклинивание ({pinchClip.length} верш.)</div>}
             {activeFaults.length > 0 && <div className="map-leg-row"><span className="map-leg-fault" /> разлом{activeFaults.length > 1 ? 'ов' : ''} ({activeFaults.length})</div>}
             {anyDeviated && <div className="map-leg-row"><span className="map-leg-dev" /> накл. ствол → снос/TVDSS</div>}
+            {scatterNote && (
+              <div className="map-leg-warn">
+                {`Скважины в ${scatterNote.groups} группах: ${scatterNote.apart} в стороне от основных ${scatterNote.main}, ` +
+                 `просвет ${scatterNote.gapKm < 10 ? scatterNote.gapKm.toFixed(1) : Math.round(scatterNote.gapKm)} км. ` +
+                 'Между группами карта пуста — там нет данных.'}
+              </div>
+            )}
             {seismicControls && seismicControls.length > 0 && (
               <div className="map-leg-row"><span className="map-leg-seis" /> сейсмо-горизонт ({seismicControls.length} тчк{seismicLines.length > 1 ? `, ${seismicLines.length} лин.` : ''})</div>
             )}
@@ -741,7 +960,13 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
                 <VolRow k="Скважин в зоне" v={String(logStats.wellsUsed)} />
               </div>
               <div className="vol-note">
-                {`φ — ${PHI_METHOD_RU[logStats.phiMethod]}`}{logStats.curves ? ` · кривые: ${logStats.curves}` : ''}
+                {`φ — ${PHI_METHOD_RU[logStats.phiMethod]}`}
+                {/* Отсечки ниже не управляют скважинами, где коллектор задан
+                    интерпретатором, — об этом честнее сказать прямо. */}
+                {logStats.interpreted > 0
+                  ? ` · коллектор по К_кол у ${logStats.interpreted} из ${logStats.wellsUsed} скв. (отсечки к ним не применяются)`
+                  : ''}
+                {logStats.curves ? ` · кривые: ${logStats.curves}` : ''}
               </div>
               <div className="vol-params cols3">
                 <VolInput label="Vsh отс." value={petro.vshCut} step={0.05} onChange={(v) => setPetro({ ...petro, vshCut: v })} />
@@ -856,9 +1081,10 @@ export function WellMap({ wells, markers, activeWellId, onActivate }: Props) {
       {!schematic && mode === 'isochore' && mappable.length >= 2 && !field && (
         <div className="map-badge">Мало общих пикировок для изохоры — выберите два пласта с ≥3 общими скважинами</div>
       )}
+      {dialog}
     </div>
   );
-}
+});
 
 function fmtM(x: number, unit: string): string {
   const a = Math.abs(x);

@@ -136,6 +136,102 @@ describe('pickCurves: русские мнемоники и враньё в по�
   });
 });
 
+describe('готовая интерпретация вместо пересчёта', () => {
+  const curve = (mnemonic: string, unit: string, values: (number | null)[]) =>
+    ({ mnemonic, unit, description: '', values });
+  const wellWith = (...curves: ReturnType<typeof curve>[]): Well => ({
+    id: 'w', name: 'W', depth: curves[0].values.map((_, i) => 2000 + i * 0.5),
+    depthUnit: 'M', lithology: [], header: {}, curves,
+  });
+
+  // Форма реальной выгрузки: К_кол задан на весь ствол, а К_п и К_нг — только
+  // внутри коллектора; единицы подписаны «%», хотя лежат доли.
+  const res4 = <T,>(a: T, b: T) => [a, a, a, a, b, b, b, b, b, b];
+  const interpreted = () => wellWith(
+    curve('aps', 'US', res4(0.9, 0.3)),
+    curve('rp', 'Ohm.M', res4(30, 3)),
+    curve('kp', '%', res4<number | null>(0.25, null)),
+    curve('kng', '%', res4<number | null>(0.7, null)),
+    curve('kol', 'US', res4(1, 0)),
+  );
+
+  it('берёт К_п, К_нг и флаг коллектора вместо пересчёта', () => {
+    const p = pickCurves(interpreted());
+    expect(p.phiCurve?.mnemonic).toBe('kp');
+    expect(p.phiMethod).toBe('direct');
+    expect(p.swCurve?.mnemonic).toBe('kng');
+    expect(p.swSource).toBe('kng');
+    expect(p.netFlag?.mnemonic).toBe('kol');
+    expect(p.netSource).toBe('flag');
+  });
+
+  it('считает скважину, у которой нет ни ГК, ни сырого сопротивления', () => {
+    // Именно такие скважины прежде отбрасывались целиком.
+    const s = zoneStats(interpreted(), 2000, 2004.5, DEFAULT_PETRO)!;
+    expect(s).not.toBeNull();
+    expect(s.net).toBeCloseTo(2, 6);      // 4 отсчёта коллектора × 0.5
+    expect(s.phi).toBeCloseTo(0.25, 6);
+    expect(s.sw).toBeCloseTo(0.3, 6);     // 1 − К_нг
+  });
+
+  it('считает gross по всему интервалу, а не только там, где есть К_п', () => {
+    // К_п существует лишь внутри коллектора: привяжи к нему gross — и N/G
+    // всегда выйдет ровно 1.
+    const s = zoneStats(interpreted(), 2000, 2004.5, DEFAULT_PETRO)!;
+    expect(s.gross).toBeCloseTo(5, 6);
+    expect(s.ng).toBeCloseTo(0.4, 6);
+  });
+
+  it('не накладывает свою отсечку по φ поверх флага интерпретатора', () => {
+    const w = interpreted();
+    w.curves.find((c) => c.mnemonic === 'kp')!.values = res4<number | null>(0.05, null); // ниже phiCut
+    const s = zoneStats(w, 2000, 2004.5, DEFAULT_PETRO)!;
+    expect(s.net).toBeCloseTo(2, 6); // флаг сказал «коллектор» — значит коллектор
+  });
+
+  it('α_ПС переворачивается: единица — чистый песчаник, а не глина', () => {
+    const w = interpreted();
+    w.curves = w.curves.filter((c) => c.mnemonic !== 'kol'); // без флага — по отсечкам
+    const p = pickCurves(w);
+    expect(p.vshSource).toBe('aps');
+    expect(p.netSource).toBe('cutoffs');
+    // aps=0.9 ⇒ Vsh=0.1 — коллектор; aps=0.3 ⇒ Vsh=0.7 — глина.
+    expect(zoneStats(w, 2000, 2004.5, DEFAULT_PETRO)!.net).toBeCloseTo(2, 6);
+  });
+
+  it('не принимает К_во за текущую водонасыщенность', () => {
+    // К_во — остаточная вода; спутать её с текущей значит завысить запасы.
+    const w = wellWith(
+      curve('kvo', '%', res4(0.2, 0.2)),
+      curve('kp', '%', res4<number | null>(0.25, null)),
+      curve('GK', '', res4(5, 90)),
+      curve('BK', 'ohm.m', res4(30, 3)),
+    );
+    const p = pickCurves(w);
+    expect(p.swCurve).toBeUndefined();
+    expect(p.swSource).toBe('archie');
+  });
+
+  it('предпочитает ρ_п сырому сопротивлению, но не путает его с RPCHX', () => {
+    const p = pickCurves(wellWith(curve('BK', 'ohm.m', [20]), curve('rp', 'Ohm.M', [30])));
+    expect(p.res?.mnemonic).toBe('rp');
+
+    const raw = pickCurves(wellWith(curve('RPCHX', 'ohm.m', [30]), curve('BK', 'ohm.m', [20])));
+    expect(raw.res?.mnemonic).toBe('BK');
+  });
+
+  it('НКТ не заслоняет К_п, даже когда стоит первым', () => {
+    // НКТ подписан m3/m3, но доходит до 3.5 — это не пористость. Раньше
+    // проверялся лишь первый подходящий кандидат, и К_п терялся.
+    const p = pickCurves(wellWith(
+      curve('NKTS', 'm3/m3', [0.6, 3.5, 2.1, 1.8]),
+      curve('kp', '%', [0.24, 0.26, 0.22, 0.25]),
+    ));
+    expect(p.phiCurve?.mnemonic).toBe('kp');
+    expect(p.phiMethod).toBe('direct');
+  });
+});
+
 describe('sonicPorosity', () => {
   it('даёт правдоподобную пористость для песчаника по Уилли', () => {
     expect(sonicPorosity(90, 55.5, 189)).toBeCloseTo(0.258, 3);

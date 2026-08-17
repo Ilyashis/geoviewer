@@ -1,10 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import { buildSyntheticSection } from './section';
 import { buildFieldSection } from './field';
-import { autoTrackHorizon, horizonControls, sampleNodes, interpolateHorizon, tieToWells, sampleHorizonAt } from './horizon';
+import { autoTrackHorizon, horizonControls, pointOnLine, sampleNodes, interpolateHorizon, tieToWells, sampleHorizonAt } from './horizon';
 import { buildSurface } from '../core/framework';
 import { twtToDepth, DEFAULT_VELOCITY } from '../core/velocity';
 import type { Well, Marker } from '../types';
+
+describe('pointOnLine', () => {
+  const line = { p0: { x: 0, y: 100 }, p1: { x: 1000, y: 300 } };
+  it('returns p0 at f=0 and p1 at f=1', () => {
+    expect(pointOnLine(line, 0)).toEqual({ x: 0, y: 100 });
+    expect(pointOnLine(line, 1)).toEqual({ x: 1000, y: 300 });
+  });
+  it('interpolates linearly in between', () => {
+    expect(pointOnLine(line, 0.5)).toEqual({ x: 500, y: 200 });
+  });
+});
 
 describe('autoTrackHorizon', () => {
   it('follows a dipping reflector across the traces', () => {

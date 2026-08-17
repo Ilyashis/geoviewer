@@ -18,6 +18,10 @@ export function marchingSquares(grid: Grid, level: number): Segment[] {
   for (let j = 0; j < ny - 1; j++) {
     for (let i = 0; i < nx - 1; i++) {
       const tl = at(i, j), tr = at(i + 1, j), br = at(i + 1, j + 1), bl = at(i, j + 1);
+      // A blank corner means the grid has no value there. Comparisons against
+      // NaN are all false, so without this the cell would silently read as
+      // "below the level" and draw a contour along the edge of the data.
+      if (!Number.isFinite(tl) || !Number.isFinite(tr) || !Number.isFinite(br) || !Number.isFinite(bl)) continue;
       let idx = 0;
       if (tl >= level) idx |= 8;
       if (tr >= level) idx |= 4;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSegy, ibmToFloat, type SegyFormat } from './segy';
+import { parseSegy, ibmToFloat, scanSegyHeaders, isSegyVolume, segyToVolume, type SegyFormat } from './segy';
 
 /**
  * Minimal SEG-Y encoder, written for the tests so the reader can be checked
@@ -198,5 +198,82 @@ describe('parseSegy', () => {
     const bad = buildSegy({ ns: 1, dt: 1000, format: 5, traces: [{ samples: [0] }] });
     new DataView(bad).setUint16(3200 + 24, 9); // unsupported code
     expect(() => parseSegy(bad)).toThrow(/Неподдерживаемый формат/);
+  });
+});
+
+/** A small regular inline × crossline grid, one sample value per trace so
+ * amp[0] identifies which (il, xl) bin it came from. */
+function buildGrid(inlines: number[], crosslines: number[], ns = 1): ArrayBuffer {
+  const traces: { samples: number[]; inline: number; crossline: number; x: number; y: number }[] = [];
+  for (const il of inlines) {
+    for (const xl of crosslines) {
+      traces.push({ samples: Array(ns).fill(il * 1000 + xl), inline: il, crossline: xl, x: il * 25, y: xl * 25 });
+    }
+  }
+  return buildSegy({ ns, dt: 2000, format: 5, traces });
+}
+
+describe('scanSegyHeaders / isSegyVolume', () => {
+  it('reads inline/crossline/coords without touching the sample payload', () => {
+    const scan = scanSegyHeaders(buildGrid([100, 101], [200, 201, 202]));
+    expect(scan.count).toBe(6);
+    expect([...new Set(scan.inline)].sort((a, b) => a - b)).toEqual([100, 101]);
+    expect([...new Set(scan.crossline)].sort((a, b) => a - b)).toEqual([200, 201, 202]);
+  });
+
+  it('is a volume when both inline and crossline vary', () => {
+    expect(isSegyVolume(scanSegyHeaders(buildGrid([100, 101], [200, 201])))).toBe(true);
+  });
+
+  it('is not a volume when only one axis varies (a 2D line)', () => {
+    expect(isSegyVolume(scanSegyHeaders(buildGrid([100], [200, 201, 202])))).toBe(false);
+    expect(isSegyVolume(scanSegyHeaders(buildGrid([100, 101, 102], [200])))).toBe(false);
+  });
+});
+
+describe('segyToVolume', () => {
+  it('bins traces into a dense inline-major grid', () => {
+    const v = segyToVolume(buildGrid([100, 101], [200, 201, 202]), 'test.sgy');
+    expect(v.nInline).toBe(2);
+    expect(v.nCrossline).toBe(3);
+    expect(v.inlineNumbers).toEqual([100, 101]);
+    expect(v.crosslineNumbers).toEqual([200, 201, 202]);
+    expect(v.traceCount).toBe(6);
+    // bin (il=1, xl=2) → inline 101, crossline 202 → sample value 101202
+    const bin = 1 * 3 + 2;
+    expect(v.amp[bin * v.nSamples]).toBe(101202);
+    expect(v.coordX[bin]).toBeCloseTo(101 * 25, 6);
+  });
+
+  it('leaves missing bins zero-filled rather than inventing data for an irregular survey outline', () => {
+    // A 2×2 grid short one corner trace (100,201) — routine at real survey edges.
+    const traces = [
+      { samples: [1], inline: 100, crossline: 200, x: 0, y: 0 },
+      { samples: [1], inline: 101, crossline: 200, x: 0, y: 0 },
+      { samples: [1], inline: 101, crossline: 201, x: 0, y: 0 },
+    ];
+    const v = segyToVolume(buildSegy({ ns: 1, dt: 1000, format: 5, traces }), 'gappy.sgy');
+    expect(v.nInline).toBe(2); expect(v.nCrossline).toBe(2);
+    expect(v.traceCount).toBe(3);
+    const missingBin = 0 * 2 + 1; // (il=100, xl=201) never came in
+    expect(v.amp[missingBin]).toBe(0);
+    expect(Number.isNaN(v.coordX[missingBin])).toBe(true);
+  });
+
+  it('rejects a cube over the byte budget instead of silently subsampling it', () => {
+    const buf = buildGrid([100, 101], [200, 201, 202]);
+    expect(() => segyToVolume(buf, 'huge.sgy', { maxBytes: 10 })).toThrow(/слишком большой/);
+  });
+
+  it('takes the survey name from the textual header, same as a 2D line', () => {
+    const buf = buildSegy({
+      ns: 1, dt: 1000, format: 5, ascii: true, textLine: 'C 1 Name: CUBE-9',
+      traces: [
+        { samples: [0], inline: 1, crossline: 1 },
+        { samples: [0], inline: 1, crossline: 2 },
+        { samples: [0], inline: 2, crossline: 1 },
+      ],
+    });
+    expect(segyToVolume(buf, 'fallback.sgy').label).toBe('CUBE-9');
   });
 });

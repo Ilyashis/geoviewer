@@ -1,19 +1,28 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { Marker, Well } from '../types';
 import {
-  buildFieldSection, autoTrackHorizon, horizonControls,
+  buildFieldSection, autoTrackHorizon, horizonControls, pointOnLine,
   sampleNodes, interpolateHorizon, tieToWells, sampleHorizonAt, EARTH,
   type HorizonNode, type FieldSection,
 } from '../seismic';
+import { seismicColor, buildSeismicRaster } from '../seismic/raster';
+import { SeismicVolumeView } from './SeismicVolumeView';
+import { SurfacePicker } from './SurfacePicker';
 import { buildSurface } from '../core/framework';
 import { metricWells } from '../wells/coords';
 import { segmentIntersection } from '../core/geom/intersect';
+import { polylineCrossings } from '../core/geom/line';
+import { apparentDipDeg, dipDirection, estimateThrow } from '../core/geom/fault';
+import { fitSimilarity, applySimilarity, type TiePoint } from '../core/geom/similarity';
 import {
-  twtToDepth, velocityAt, calibrateVelocity, DEFAULT_VELOCITY, COMPACTION,
+  twtToDepth, depthToTwt, velocityAt, calibrateVelocity, DEFAULT_VELOCITY, COMPACTION,
   type VelocityModel, type VelocitySample,
 } from '../core/velocity';
 import { fieldVelocityTable } from '../wells/checkshot';
+import { computeTrajectory, type TrajPoint } from '../wells/deviation';
+import { structuralControlPoints } from '../wells/structure';
 import { useStore } from '../store';
+import { useConfirm } from '../hooks/useConfirm';
 
 interface Props {
   wells: Well[];
@@ -34,11 +43,18 @@ const NODE_COUNT = 14; // editable nodes along the horizon
 const CONV_PRESETS: Record<'const' | 'linear', VelocityModel> = { const: DEFAULT_VELOCITY, linear: COMPACTION };
 const niceStep = (raw: number) => { const p = Math.pow(10, Math.floor(Math.log10(raw))); const n = raw / p; return (n >= 5 ? 5 : n >= 2 ? 2 : 1) * p; };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-
-/** Dark variable-density seismic: near-black at zero, red for +, cyan-blue for −. */
-function seismicColor(v: number): [number, number, number] {
-  const a = Math.min(1, Math.abs(v));
-  return v >= 0 ? [30 + 225 * a, 34 + 36 * a, 34] : [30, 44 + 120 * a, 44 + 211 * a];
+// A well top always has a colour (used to pick this label's colour while
+// editing); an imported line's numbered pick ("1", "2"…) doesn't, since
+// nothing carries colour into the saved ControlPoint[]. Falls back to a
+// small fixed palette, picked deterministically from the label so the same
+// horizon keeps the same colour across renders and reloads.
+const FALLBACK_HORIZON_COLORS = ['#10a1ff', '#FF9500', '#09b37b', '#AF52DE', '#eb5757', '#00c7be', '#f2c94c', '#B6C2CE'];
+function horizonColorFor(label: string, horizonList: { label: string; color: string }[]): string {
+  const known = horizonList.find((h) => h.label === label);
+  if (known) return known.color;
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) hash = (hash * 31 + label.charCodeAt(i)) | 0;
+  return FALLBACK_HORIZON_COLORS[Math.abs(hash) % FALLBACK_HORIZON_COLORS.length];
 }
 
 /**
@@ -58,11 +74,31 @@ export function SeismicView({ wells, markers }: Props) {
   const [calModel, setCalModel] = useState<VelocityModel | null>(null);
   /** Numbering for picks seeded by clicking an imported line. */
   const [pickSeq, setPickSeq] = useState(1);
+  const [faultPickMode, setFaultPickMode] = useState(false);
+  /** Pending, uncommitted picks — one point per synthetic line isn't enough to
+   * place a fault trace (a line only tells you where it crosses, not which
+   * way the fault runs), so a second pick on the other line supplies that,
+   * the same loop-tie idea the horizon picking already uses. */
+  const [faultPicks, setFaultPicks] = useState<Record<LineId, { f: number; twt: number } | null>>({});
+  const [tieMode, setTieMode] = useState(false);
+  /** Draft tie points for manually georeferencing an imported line — `f` (a
+   * fraction along the line, invariant to any calibration already applied)
+   * comes from a click, the map half from what the interpreter actually
+   * knows about that point (typed, or filled from a well). */
+  const [tieDraft, setTieDraft] = useState<{ f: number; mapX: string; mapY: string }[]>([]);
   const checkshots = useStore((s) => s.checkshots);
   const segyLines = useStore((s) => s.segyLines);
+  const segyVolumes = useStore((s) => s.segyVolumes);
+  const [seismicMode, setSeismicMode] = useState<'lines' | 'volume'>('lines');
   const seismicHorizons = useStore((s) => s.seismicHorizons);
   const setSeismicHorizon = useStore((s) => s.setSeismicHorizon);
   const clearSeismicHorizon = useStore((s) => s.clearSeismicHorizon);
+  const faults = useStore((s) => s.faults);
+  const setFaults = useStore((s) => s.setFaults);
+  const setSegyLineTie = useStore((s) => s.setSegyLineTie);
+  const focusRequest = useStore((s) => s.focusRequest);
+  const setFocusRequest = useStore((s) => s.setFocusRequest);
+  const { confirm: confirmSwitch, dialog: switchDialog } = useConfirm();
 
   const edit = edits[lineId];
   const setEdit = (e: EditState | null) => setEdits((prev) => ({ ...prev, [lineId]: e }));
@@ -92,6 +128,18 @@ export function SeismicView({ wells, markers }: Props) {
     () => metricWells(wells).filter((w) => Number.isFinite(w.x) && Number.isFinite(w.y)),
     [wells],
   );
+  const trajs = useMemo(() => {
+    const m = new Map<string, TrajPoint[]>();
+    for (const w of coordWells) if (w.survey?.length) m.set(w.id, computeTrajectory(w.survey));
+    return m;
+  }, [coordWells]);
+  /** Markers with enough picks to grid, same rule the map uses — a new
+   * seismic-picked fault defaults to cutting all of them, same as a
+   * map-drawn one, editable afterward from the map's fault list. */
+  const mappable = useMemo(() => {
+    const ids = new Set(coordWells.map((w) => w.id));
+    return markers.filter((m) => Object.keys(m.depths).filter((id) => ids.has(id) && Number.isFinite(m.depths[id])).length >= 3);
+  }, [markers, coordWells]);
   // Both lines are built together (geometry is cheap) so they can be tied at their
   // crossing point regardless of which one is on screen; only the active line's
   // raster gets rendered.
@@ -101,9 +149,13 @@ export function SeismicView({ wells, markers }: Props) {
     const m: Record<LineId, FieldSection | null> = { A: fieldA, B: fieldB };
     // An imported line becomes a FieldSection with no wells posted: its
     // coordinates are in the survey's own CRS, which need not match the
-    // project's, so nothing here may be tied to the map.
+    // project's. Once manually tied (`l.tie`), its raw coordinates are
+    // carried through the fitted similarity transform into the project's
+    // frame — same field.line shape everywhere else already assumes.
     for (const l of segyLines) {
-      const c = l.coords.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+      const raw = l.coords.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+      const xform = l.tie ? fitSimilarity(l.tie[0], l.tie[1]) : null;
+      const c = xform ? raw.map((p) => applySimilarity(xform, p)) : raw;
       m[l.id] = {
         section: l.section,
         earth: EARTH,
@@ -118,6 +170,15 @@ export function SeismicView({ wells, markers }: Props) {
   const field = fields[lineId] ?? null;
   const importedLine = segyLines.find((l) => l.id === lineId) ?? null;
   const isImported = !!importedLine;
+  /** A manually tied import behaves like a synthetic line for anything that
+   * needs real map coordinates — its `field.line` already carries them. */
+  const calibrated = !!importedLine?.tie;
+  /** The line's own, as-recorded endpoints — what a tie point's "local"
+   * half is defined against, regardless of any existing calibration. */
+  const rawLine = useMemo(() => {
+    const c = importedLine?.coords.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y)) ?? [];
+    return c.length >= 2 ? { p0: c[0], p1: c[c.length - 1] } : null;
+  }, [importedLine]);
 
   /** Synthetic lines plus every imported one, in selector order. */
   const lineOptions = useMemo(
@@ -139,9 +200,57 @@ export function SeismicView({ wells, markers }: Props) {
     return [...by.entries()].map(([label, e]) => ({ label, color: e.color, seedTwt: e.sum / e.n }));
   }, [field]);
 
+  /**
+   * Every OTHER horizon already saved to the map, on this line — drawn as a
+   * muted reference while a different one is being edited, the same idea
+   * Petrel/OpendTect use (each horizon its own colour, all visible at once)
+   * so switching what you're picking doesn't mean losing sight of what's
+   * already been picked. `ControlPoint[]` only carries depth (z), not TWT,
+   * so it's converted back through the CURRENT velocity model — same as the
+   * active edit's own depth readout, consistent under one conversion rather
+   * than frozen at whatever model was active when it was saved.
+   */
+  const savedHorizons = useMemo(() => {
+    if (!field) return [];
+    const n = field.section.nTraces;
+    const out: { label: string; color: string; twt: Float64Array }[] = [];
+    for (const label of Object.keys(seismicHorizons)) {
+      if (label === edit?.label) continue;
+      const controls = seismicHorizons[label]?.[lineId];
+      if (!controls || controls.length === 0) continue;
+      const twt = new Float64Array(n);
+      const m = Math.min(controls.length, n);
+      for (let i = 0; i < m; i++) twt[i] = depthToTwt(conv, controls[i].z);
+      for (let i = m; i < n; i++) twt[i] = twt[m - 1] ?? 0; // defensive: trace count shouldn't drift, but never index past what was saved
+      out.push({ label, color: horizonColorFor(label, horizonList), twt });
+    }
+    return out;
+  }, [seismicHorizons, lineId, field, edit?.label, conv, horizonList]);
+
   // Drop stale picks on both lines when the underlying wells/markers change —
   // switching which line is on screen must NOT clear the other line's work.
-  useEffect(() => { setEdits({}); }, [coordWells, markers]);
+  useEffect(() => { setEdits({}); setFaultPicks({}); setFaultPickMode(false); }, [coordWells, markers]);
+  // A tie draft is meaningless once you're not looking at the line it was
+  // picked on — its "local" half is a coordinate in that specific line's
+  // own, unresolved frame.
+  useEffect(() => { setTieDraft([]); setTieMode(false); }, [lineId]);
+  // "Show this" from the data panel — one-shot: apply the requested line
+  // selection, then clear the signal so it doesn't re-fire on its own.
+  useEffect(() => {
+    if (focusRequest?.target === 'seismicLine') {
+      setLineId(focusRequest.id);
+      setFocusRequest(null);
+    }
+  }, [focusRequest, setFocusRequest]);
+  // No wells yet, but an imported line exists — the default 'A'/'B' synthetic
+  // lines are unusable (no wells to build them from), so land on the import
+  // instead of a dead "need coordinates" placeholder. Only kicks in while
+  // still on a synthetic id, so it never overrides a deliberate selection.
+  useEffect(() => {
+    if (wells.length === 0 && segyLines.length > 0 && (lineId === 'A' || lineId === 'B')) {
+      setLineId(segyLines[0].id);
+    }
+  }, [wells.length, segyLines, lineId]);
 
   // Plot geometry — shared by the draw effect and the pointer handlers.
   const geom = useMemo(() => {
@@ -157,6 +266,41 @@ export function SeismicView({ wells, markers }: Props) {
       twtOfY: (y: number) => t0 + ((y - T) / ph) * (tEnd - t0),
     };
   }, [field, size]);
+
+  /**
+   * Where the map's faults cross this line, as apparent dip in TIME — only
+   * for synthetic lines and manually tied imports: an untied SEG-Y line's
+   * coordinates are in the survey's own, unresolved CRS (see the note
+   * below), so a map-space fault trace has no honest position on it at all.
+   * Direction is derived from `estimateThrow`'s sign at the fault's own cut
+   * markers, same as everywhere else dip shows up — not asked for twice.
+   */
+  const faultCrossings = useMemo(() => {
+    if ((isImported && !calibrated) || !field) return [];
+    const { p0, p1 } = field.line;
+    const lineLen = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+    if (lineLen <= 0) return [];
+    const out: { fault: (typeof faults)[number]; f: number; apparentDeg: number | null }[] = [];
+    for (const fault of faults) {
+      const crossings = polylineCrossings([p0, p1], fault.trace);
+      if (crossings.length === 0) continue;
+      let throwSign: number | null = null;
+      for (const id of fault.markerIds) {
+        const m = markers.find((mk) => mk.id === id);
+        if (!m) continue;
+        const t = estimateThrow(fault.trace, structuralControlPoints(m, coordWells, trajs));
+        if (t != null && t !== 0) { throwSign = t; break; }
+      }
+      for (const c of crossings) {
+        const apparentDeg = fault.dip != null && throwSign != null
+          ? apparentDipDeg(fault.dip, dipDirection(c.otherDir, throwSign), c.lineDir)
+          : null;
+        out.push({ fault, f: c.arc / lineLen, apparentDeg });
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isImported, calibrated, field, faults, markers, coordWells, trajs]);
 
   // Interpolated per-trace horizon from the (edited) nodes.
   const horizonTwt = useMemo(
@@ -261,6 +405,50 @@ export function SeismicView({ wells, markers }: Props) {
     });
   };
 
+  // A straight trace between the two lines' picks — the minimum a fault
+  // interpretation on 2D lines can honestly give: exactly two real points,
+  // no invented strike beyond what they define. Dip stays unset (typed in
+  // later from the map, like any other fault) — a single point per line
+  // carries no separation to derive an angle from either.
+  const faultPickPair = faultPicks.A && faultPicks.B && fieldA && fieldB
+    ? { a: pointOnLine(fieldA.line, faultPicks.A.f), b: pointOnLine(fieldB.line, faultPicks.B.f) }
+    : null;
+  const createFault = () => {
+    if (!faultPickPair) return;
+    const n = faults.reduce((mx, f) => Math.max(mx, Number(f.id.replace(/\D/g, '')) || 0), 0) + 1;
+    setFaults((fs) => [...fs, {
+      id: `fault-${n}`,
+      label: `Разлом ${n}`,
+      markerIds: mappable.map((m) => m.id),
+      trace: [faultPickPair.a, faultPickPair.b],
+    }]);
+    setFaultPicks({});
+    setFaultPickMode(false);
+  };
+
+  const addTiePoint = (f: number) =>
+    setTieDraft((prev) => (prev.length >= 2 ? prev : [...prev, { f, mapX: '', mapY: '' }]));
+  const removeTiePoint = (i: number) => setTieDraft((prev) => prev.filter((_, k) => k !== i));
+  const setTiePointMap = (i: number, mapX: string, mapY: string) =>
+    setTieDraft((prev) => prev.map((p, k) => (k === i ? { ...p, mapX, mapY } : p)));
+  // Number('') is 0, not NaN — an untouched field must not silently count
+  // as a real coordinate of (0, 0).
+  const isFilled = (v: string) => v.trim() !== '' && Number.isFinite(Number(v));
+  const tiePair: [TiePoint, TiePoint] | null = rawLine && tieDraft.length === 2
+    && isFilled(tieDraft[0].mapX) && isFilled(tieDraft[0].mapY)
+    && isFilled(tieDraft[1].mapX) && isFilled(tieDraft[1].mapY)
+    ? [
+      { local: pointOnLine(rawLine, tieDraft[0].f), map: { x: Number(tieDraft[0].mapX), y: Number(tieDraft[0].mapY) } },
+      { local: pointOnLine(rawLine, tieDraft[1].f), map: { x: Number(tieDraft[1].mapX), y: Number(tieDraft[1].mapY) } },
+    ]
+    : null;
+  const applyTie = () => {
+    if (!tiePair || !importedLine) return;
+    setSegyLineTie(importedLine.id, tiePair);
+    setTieDraft([]);
+    setTieMode(false);
+  };
+
   // --- Node drag editing ---
   const nearestNode = (mx: number, my: number): number | null => {
     if (!edit || !geom || !field) return null;
@@ -278,6 +466,22 @@ export function SeismicView({ wells, markers }: Props) {
   };
   const onDown = (e: PointerEvent<HTMLCanvasElement>) => {
     const { mx, my } = mouse(e);
+    // Tie-point picking takes priority over everything else while active.
+    if (tieMode) {
+      if (isImported && rawLine && geom && field && mx > geom.L && my > geom.T && tieDraft.length < 2) {
+        addTiePoint(clamp((mx - geom.L) / geom.pw, 0, 1));
+      }
+      return;
+    }
+    // Fault picking takes priority over horizon editing while active — a
+    // click means "mark the fault here," not "drag the nearest node."
+    if (faultPickMode) {
+      if (!isImported && geom && field && mx > geom.L && my > geom.T) {
+        const f = clamp((mx - geom.L) / geom.pw, 0, 1);
+        setFaultPicks((prev) => ({ ...prev, [lineId]: { f, twt: clamp(geom.twtOfY(my), geom.t0, geom.tEnd) } }));
+      }
+      return;
+    }
     // An imported line carries no well tops, so there is nothing to seed a pick
     // from: the click itself is the seed. Autotracking then follows the event
     // from there exactly as it does on a synthetic line.
@@ -291,6 +495,14 @@ export function SeismicView({ wells, markers }: Props) {
     if (k != null) { dragRef.current = k; canvasRef.current!.setPointerCapture(e.pointerId); }
   };
   const onMove = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (tieMode) {
+      if (canvasRef.current) canvasRef.current.style.cursor = isImported && tieDraft.length < 2 ? 'crosshair' : 'not-allowed';
+      return;
+    }
+    if (faultPickMode) {
+      if (canvasRef.current) canvasRef.current.style.cursor = isImported ? 'not-allowed' : 'crosshair';
+      return;
+    }
     if (!edit) {
       if (canvasRef.current) canvasRef.current.style.cursor = isImported ? 'crosshair' : 'default';
       return;
@@ -309,24 +521,7 @@ export function SeismicView({ wells, markers }: Props) {
     if (dragRef.current != null) { canvasRef.current!.releasePointerCapture(e.pointerId); dragRef.current = null; }
   };
 
-  const image = useMemo(() => {
-    if (!field) return null;
-    const { nTraces, nSamples, amp, ampMax } = field.section;
-    const off = document.createElement('canvas');
-    off.width = nTraces; off.height = nSamples;
-    const octx = off.getContext('2d');
-    if (!octx) return null;
-    const img = octx.createImageData(nTraces, nSamples);
-    for (let i = 0; i < nTraces; i++) {
-      for (let s = 0; s < nSamples; s++) {
-        const [r, g, b] = seismicColor(amp[i * nSamples + s] / ampMax);
-        const p = (s * nTraces + i) * 4;
-        img.data[p] = r; img.data[p + 1] = g; img.data[p + 2] = b; img.data[p + 3] = 255;
-      }
-    }
-    octx.putImageData(img, 0, 0);
-    return off;
-  }, [field]);
+  const image = useMemo(() => (field ? buildSeismicRaster(field.section) : null), [field]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -398,6 +593,103 @@ export function SeismicView({ wells, markers }: Props) {
       ctx.fillText('×', x, T + ph + 14);
     }
 
+    // Fault crossings: dashed, vertical unless a dip's been entered — same
+    // convention as the map-drawn cross-section, translated into TWT via the
+    // active depth-conversion model so the tilt is honest in this domain too.
+    // Parametrized by arc offset (not depth) and depth-clamped before
+    // converting to TWT, since a compaction model's log() has a domain edge
+    // an unclamped huge offset could cross.
+    if (faultCrossings.length > 0) {
+      const warn = v('--warn', '#ff9f0a');
+      const zTop = twtToDepth(conv, t0), zBot = twtToDepth(conv, tEnd);
+      const zAnchor = (zTop + zBot) / 2;
+      const zMargin = Math.max(zBot - zTop, 50);
+      const totalZSpan = (zBot - zTop) + zMargin * 2;
+      const lineLen = Math.hypot(field.line.p1.x - field.line.p0.x, field.line.p1.y - field.line.p0.y);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
+      for (const { f, apparentDeg } of faultCrossings) {
+        if (f < 0 || f > 1) continue;
+        ctx.strokeStyle = warn; ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        if (apparentDeg != null) {
+          const tanA = Math.tan((apparentDeg * Math.PI) / 180);
+          const span = Math.min(totalZSpan / Math.max(Math.abs(tanA), 1e-9), lineLen * 4);
+          const arc = f * lineLen;
+          const f1 = (arc - span) / lineLen, f2 = (arc + span) / lineLen;
+          const z1 = zAnchor - tanA * span, z2 = zAnchor + tanA * span;
+          ctx.moveTo(xOf(f1), yOf(depthToTwt(conv, z1)));
+          ctx.lineTo(xOf(f2), yOf(depthToTwt(conv, z2)));
+        } else {
+          const x = xOf(f);
+          ctx.moveTo(x, T); ctx.lineTo(x, T + ph);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.restore();
+      ctx.font = '10px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = warn;
+      for (const { fault, f, apparentDeg } of faultCrossings) {
+        if (f < 0 || f > 1) continue;
+        const label = apparentDeg == null ? fault.label : `${fault.label} (${Math.round(Math.abs(apparentDeg))}°)`;
+        ctx.fillText(label, xOf(f), T + 12);
+      }
+      ctx.font = '11px ui-monospace, monospace';
+    }
+
+    // A pending fault pick on this line, not yet a real fault — needs the
+    // other line's pick too before it becomes one.
+    const pendingPick = !isImported ? faultPicks[lineId] : null;
+    if (pendingPick) {
+      const warn = v('--warn', '#ff9f0a');
+      const x = xOf(pendingPick.f), y = yOf(pendingPick.twt);
+      ctx.strokeStyle = warn; ctx.fillStyle = warn; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x - 8, y); ctx.lineTo(x + 8, y); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Draft tie points — position only (a georeferencing pick has no depth
+    // of its own), so a full-height tick rather than a point on the trace.
+    if (isImported && tieDraft.length > 0) {
+      const accent2 = v('--accent-2', '#34d1a8');
+      ctx.strokeStyle = accent2; ctx.fillStyle = accent2; ctx.lineWidth = 1.5;
+      ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'center';
+      tieDraft.forEach((d, i) => {
+        const x = xOf(d.f);
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, T + ph); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillText(String(i + 1), x, T + ph + 14);
+      });
+      ctx.font = '11px ui-monospace, monospace';
+    }
+
+    // Other saved horizons on this line — muted, each its own colour, so
+    // switching what's being edited doesn't hide what's already picked.
+    if (savedHorizons.length > 0) {
+      const n = section.nTraces;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
+      ctx.lineJoin = 'round'; ctx.globalAlpha = 0.55;
+      for (const h of savedHorizons) {
+        ctx.strokeStyle = h.color; ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          const x = xOf(n > 1 ? i / (n - 1) : 0), y = yOf(h.twt[i]);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.restore();
+      // Legend label drawn near the amplitude one, below — top-left and
+      // top-right are both already claimed by the line-picker panel and the
+      // pick-results aside, so bottom-right is the one corner with room.
+    }
+
     // Editable horizon: interpolated line + draggable node handles.
     if (edit && horizonTwt) {
       const n = section.nTraces;
@@ -415,23 +707,68 @@ export function SeismicView({ wells, markers }: Props) {
       }
     }
 
-    // Amplitude legend.
+    // Amplitude legend, and — stacked above it, same corner — which muted
+    // reference horizons are which colour. Top-left is the line/pick panel,
+    // top-right is the pick-results aside whenever a horizon's being edited
+    // (i.e. almost always when this legend would have something to show),
+    // so bottom-right is the one spot not already claimed by an HTML overlay.
     const lw = 96, lh = 8, lx = L + pw - lw - 8, ly = T + ph - 20;
+    if (savedHorizons.length > 0) {
+      ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'left';
+      savedHorizons.forEach((h, k) => {
+        // ly - 5 is already the "амплитуда −/+" label's baseline — clear it.
+        const ry = ly - 22 - (savedHorizons.length - 1 - k) * 14;
+        ctx.fillStyle = h.color; ctx.fillRect(lx, ry - 7, 9, 9);
+        ctx.fillStyle = text3; ctx.fillText(h.label, lx + 13, ry);
+      });
+      ctx.font = '11px ui-monospace, monospace';
+    }
     for (let i = 0; i < lw; i++) { const [r, g, b] = seismicColor((i / lw) * 2 - 1); ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(lx + i, ly, 1, lh); }
     ctx.strokeStyle = border; ctx.strokeRect(lx, ly, lw, lh);
     ctx.fillStyle = text3; ctx.textAlign = 'center'; ctx.fillText('амплитуда −/+', lx + lw / 2, ly - 5);
-  }, [field, image, size, geom, edit, horizonTwt, crossing, lineId]);
+  }, [field, image, size, geom, edit, horizonTwt, crossing, lineId, faultCrossings, conv, faultPicks, isImported, tieDraft, savedHorizons]);
 
-  if (wells.length === 0) {
-    return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Загрузите скважины — здесь появится синтетический сейсмо-разрез вдоль линии скважин с привязкой кровель.</p></div></div>;
+  // Volumes are entirely well/line-independent (own FieldSection-free path),
+  // so this mode is reachable even when there's nothing for the 2D side to
+  // show — the placeholders below only ever apply to 'lines' mode.
+  const modeBar = segyVolumes.length > 0 ? (
+    <div className="seismic-mode-bar">
+      <button className={`seismic-mode-btn ${seismicMode === 'lines' ? 'on' : ''}`} onClick={() => setSeismicMode('lines')}>Линии</button>
+      <button className={`seismic-mode-btn ${seismicMode === 'volume' ? 'on' : ''}`} onClick={() => setSeismicMode('volume')}>Куб</button>
+    </div>
+  ) : null;
+
+  if (seismicMode === 'volume' && segyVolumes.length > 0) {
+    return <>{modeBar}<SeismicVolumeView /></>;
+  }
+
+  if (wells.length === 0 && segyLines.length === 0) {
+    return <>{modeBar}<div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Загрузите скважины — здесь появится синтетический сейсмо-разрез вдоль линии скважин с привязкой кровель. Либо импортируйте SEG-Y (.segy/.sgy) — интерпретировать его можно и без единой скважины.</p></div></div></>;
   }
   if (!field) {
-    return <div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Нужны ≥2 скважины с координатами, чтобы построить линию разреза.</p></div></div>;
+    return <>{modeBar}<div className="placeholder"><div className="pc"><h3>Сейсмика</h3><p>Нужны ≥2 скважины с координатами, чтобы построить линию разреза, либо импортированная SEG-Y линия.</p></div></div></>;
   }
 
   const inMap = edit ? !!seismicHorizons[edit.label]?.[lineId] : false;
+  // Picking a different horizon (or starting over on an imported line)
+  // overwrites `edits[lineId]` outright — confirm first when that would
+  // throw away node drags nobody's told the map about yet.
+  const switchHorizon = (next: () => void) => {
+    if (edit && !inMap) {
+      confirmSwitch({
+        title: `Переключить горизонт, не сохранив «${edit.label}»?`,
+        message: 'Этот горизонт ещё не сохранён в карту («Использовать в карте») — переключение сотрёт правки узлов без возможности восстановления.',
+        confirmLabel: 'Переключить',
+        onConfirm: next,
+      });
+    } else {
+      next();
+    }
+  };
 
   return (
+    <>
+      {modeBar}
     <div className="seismic" ref={wrapRef}>
       <canvas ref={canvasRef} className="seismic-canvas" style={{ width: size.w, height: size.h }}
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} />
@@ -451,16 +788,37 @@ export function SeismicView({ wells, markers }: Props) {
         {!isImported && horizonList.length > 0 && (
           <>
             <div className="seismic-panel-h seismic-panel-h2">Снять горизонт</div>
-            <div className="seismic-picks">
-              {horizonList.map((h) => (
-                <button key={h.label} className={`seismic-pick ${edit?.label === h.label ? 'on' : ''}`}
-                  onClick={() => snap(h.label, h.color, h.seedTwt)}>
-                  <span className="seismic-dot" style={{ background: h.color }} />{h.label}
-                </button>
-              ))}
-            </div>
+            <SurfacePicker
+              label="Пласт"
+              options={horizonList.map((h) => ({ id: h.label, label: h.label, color: h.color }))}
+              value={edit?.label}
+              onChange={(label) => {
+                const h = horizonList.find((x) => x.label === label);
+                if (h) switchHorizon(() => snap(h.label, h.color, h.seedTwt));
+              }}
+            />
             {edit && <div className="seismic-hint">Перетащите узлы, чтобы поправить горизонт.</div>}
             {crossHint && <div className="seismic-hint">{crossHint}</div>}
+          </>
+        )}
+
+        {!isImported && (
+          <>
+            <div className="seismic-panel-h seismic-panel-h2">Разлом</div>
+            <button className={`seismic-vel-btn ${faultPickMode ? 'on' : ''}`}
+              onClick={() => setFaultPickMode((m) => !m)}>
+              {faultPickMode ? 'отмена' : 'снять на этой линии'}
+            </button>
+            {faultPickMode && <div className="seismic-hint">Кликните по разрыву отражателя.</div>}
+            {(faultPicks.A || faultPicks.B) && (
+              <div className="seismic-hint">
+                Точка снята: {(['A', 'B'] as LineId[]).filter((id) => faultPicks[id]).map((id) => lineLabel(id)).join(', ')}.
+                {!faultPickPair && ' Снимите то же место и на второй линии.'}
+              </div>
+            )}
+            {faultPickPair && (
+              <button className="seismic-apply" onClick={createFault}>Создать разлом</button>
+            )}
           </>
         )}
 
@@ -470,13 +828,51 @@ export function SeismicView({ wells, markers }: Props) {
             {edit ? (
               <>
                 <div className="seismic-hint">Перетащите узлы, чтобы поправить горизонт.</div>
-                <button className="seismic-remove" onClick={() => { setEdit(null); setPickSeq((n) => n + 1); }}>
+                <button className="seismic-remove" onClick={() => switchHorizon(() => { setEdit(null); setPickSeq((n) => n + 1); })}>
                   снять заново
                 </button>
               </>
             ) : (
               // No well tops exist on an imported line, so the click is the seed.
               <div className="seismic-hint">Кликните по отражателю — горизонт протрассируется от этой точки.</div>
+            )}
+
+            <div className="seismic-panel-h seismic-panel-h2">Привязка</div>
+            {calibrated ? (
+              <>
+                <div className="seismic-hint">Линия привязана к карте по двум точкам.</div>
+                <button className="seismic-remove" onClick={() => setSegyLineTie(importedLine!.id, undefined)}>
+                  сбросить привязку
+                </button>
+              </>
+            ) : (
+              <>
+                <button className={`seismic-vel-btn ${tieMode ? 'on' : ''}`}
+                  disabled={!tieMode && tieDraft.length >= 2}
+                  onClick={() => setTieMode((m) => !m)}>
+                  {tieMode ? 'отмена' : 'снять точку'}
+                </button>
+                {tieMode && <div className="seismic-hint">Кликните по точке, чью реальную позицию вы знаете.</div>}
+                {tieDraft.map((d, i) => (
+                  <div className="seismic-tie-row" key={i}>
+                    <span>Точка {i + 1}</span>
+                    <input type="number" placeholder="X" value={d.mapX} onChange={(e) => setTiePointMap(i, e.target.value, d.mapY)} />
+                    <input type="number" placeholder="Y" value={d.mapY} onChange={(e) => setTiePointMap(i, d.mapX, e.target.value)} />
+                    <select value="" onChange={(e) => {
+                      const w = coordWells.find((cw) => cw.id === e.target.value);
+                      if (w) setTiePointMap(i, String(w.x), String(w.y));
+                    }}>
+                      <option value="" disabled>со скв.…</option>
+                      {coordWells.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                    </select>
+                    <button title="Убрать точку" onClick={() => removeTiePoint(i)}>×</button>
+                  </div>
+                ))}
+                {tieDraft.length > 0 && !tiePair && (
+                  <div className="seismic-hint">Введите или снимите со скважины реальные X/Y для каждой точки.</div>
+                )}
+                {tiePair && <button className="seismic-apply" onClick={applyTie}>Применить привязку</button>}
+              </>
             )}
           </>
         )}
@@ -498,11 +894,10 @@ export function SeismicView({ wells, markers }: Props) {
               <b>±{crossing.tie.mistie.toFixed(1)} м</b>
             </div>
           )}
-          {isImported ? (
+          {isImported && !calibrated ? (
             <div className="seismic-note">
               Координаты этой съёмки — в своей системе (в заголовке <code>CRS: &lt;undef&gt;</code>) и не совпадают
-              с координатами скважин. Пока преобразование неизвестно, перенос в карту дал бы неверное положение,
-              поэтому он отключён.
+              с координатами скважин. Привяжите линию по опорным точкам (ниже), чтобы включить перенос в карту.
             </div>
           ) : (
             <>
@@ -543,6 +938,8 @@ export function SeismicView({ wells, markers }: Props) {
             : calModel.kind === 'const' ? `V=${calModel.v}` : 'по чекшотам'}</span>
         )}
       </div>
+      {switchDialog}
     </div>
+    </>
   );
 }

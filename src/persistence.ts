@@ -1,4 +1,8 @@
 import type { Marker, Well } from './types';
+import type { FaultDef, SectionLine } from './store/slices/framework';
+import type { WellCheckshot } from './wells/checkshot';
+import type { SegyLine, SeismicVolume } from './seismic/segy';
+import type { ControlPoint } from './core/framework';
 import { uid } from './util/id';
 
 /**
@@ -26,6 +30,14 @@ export interface ProjectData {
   activeWellId: string | null;
   /** View settings: track titles / LITHO_KEY hidden per well. */
   hiddenTracks?: Record<string, string[]>;
+  /** Structural framework: fault traces, cross-section lines, checkshots,
+   *  imported SEG-Y lines and any seismic-picked horizon control points. */
+  faults?: FaultDef[];
+  sections?: SectionLine[];
+  checkshots?: WellCheckshot[];
+  segyLines?: SegyLine[];
+  segyVolumes?: SeismicVolume[];
+  seismicHorizons?: Record<string, Record<string, ControlPoint[]>>;
 }
 
 interface AppMeta {

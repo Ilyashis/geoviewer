@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Layers, Share2, FolderOpen, MessageSquare,
   MousePointer2, Square, PenLine, Milestone, Type, Table as TableIcon,
-  Navigation, Spline, Upload,
+  Navigation, Spline, Upload, Radio,
 } from 'lucide-react';
 import { useStore } from './store';
+import { Logo } from './components/Logo';
 import { WellLogPlate, wellDepthExtent } from './components/WellLogPlate';
 import { CorrelationMarkers, RAIL_W } from './components/CorrelationMarkers';
 import { MarkerInspector } from './components/MarkerInspector';
@@ -12,23 +13,35 @@ import { ImportModal } from './components/ImportModal';
 import { ExportMenu } from './components/ExportMenu';
 import { ProjectMenu } from './components/ProjectMenu';
 import { Dashboard } from './components/Dashboard';
-import { WellMap } from './components/WellMap';
+import { WellMap, type WellMapHandle } from './components/WellMap';
 import { WellTie } from './components/WellTie';
 import { ReservesSummary } from './components/ReservesSummary';
-import { CrossplotView } from './components/CrossplotView';
+import { CrossplotView, type CrossplotHandle } from './components/CrossplotView';
 import { SeismicView } from './components/SeismicView';
+import { CrossSectionView, type CrossSectionHandle } from './components/CrossSectionView';
+import { useConfirm } from './hooks/useConfirm';
+
 import {
   bootstrap, persist, createProject, renameProject, switchProject, deleteProject,
 } from './persistence';
 import { buildDemoLas } from './sampleData';
 
-type TabKey = 'map' | 'correlation' | 'tie' | 'seismic' | 'crossplot' | 'reserves' | 'dashboard';
+/**
+ * three.js weighs ~136 kB gzipped — more than the entire rest of the app. It is
+ * fetched when the 3D tab is first opened, so loading a project and reading a
+ * map never pays for a renderer the user may not touch.
+ */
+const Scene3D = lazy(() => import('./components/Scene3D').then((m) => ({ default: m.Scene3D })));
+
+type TabKey = 'map' | 'correlation' | 'tie' | 'seismic' | 'scene3d' | 'section' | 'crossplot' | 'reserves' | 'dashboard';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'map', label: 'Карта' },
   { key: 'correlation', label: 'Корр. схема' },
   { key: 'tie', label: 'Привязка' },
   { key: 'seismic', label: 'Сейсмика' },
+  { key: 'scene3d', label: '3D' },
+  { key: 'section', label: 'Разрез' },
   { key: 'crossplot', label: 'Кроссплоты' },
   { key: 'reserves', label: 'Запасы' },
   { key: 'dashboard', label: 'Дашборд' },
@@ -42,6 +55,20 @@ const TOOLS = [
   { key: 'text', label: 'Текст', Icon: Type },
   { key: 'table', label: 'Таблица', Icon: TableIcon },
 ] as const;
+
+// Correlation has its own dynamic, tool-dependent hint below — everything
+// else gets one static line describing its actual (verified) interaction.
+// Tabs with no canvas/pointer interaction of their own (section, crossplot,
+// reserves, dashboard), or that already show their own in-canvas hint
+// (scene3d has .scene3d-hint), are left out rather than given a duplicate
+// or made-up hint.
+const TAB_HINTS: Partial<Record<TabKey, string>> = {
+  map: 'Колесо — зум · перетаскивание — панорама · клик по скважине — сделать активной',
+  tie: 'Клик по ячейке — ввести или изменить глубину пикировки',
+  seismic: 'Клик по линии — пикировка горизонта · перетаскивание точки — правка',
+  section: 'Колесо — зум · перетаскивание — панорама',
+  crossplot: 'Колесо — зум · перетаскивание — панорама (только для кроссплота, не гистограммы)',
+};
 
 export default function App() {
   const wells = useStore((s) => s.wells);
@@ -69,6 +96,7 @@ export default function App() {
   const setCurrentProject = useStore((s) => s.setCurrentProject);
   const hiddenTracks = useStore((s) => s.hiddenTracks);
   const toggleTrack = useStore((s) => s.toggleTrack);
+  const setFocusRequest = useStore((s) => s.setFocusRequest);
   const selectedMarker = markers.find((m) => m.id === selectedMarkerId) ?? null;
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -78,10 +106,18 @@ export default function App() {
   const [depthWindow, setDepthWindow] = useState<[number, number] | null>(null);
   const [cursorDepth, setCursorDepth] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const { confirm: confirmDestroy, dialog: destroyDialog } = useConfirm();
   const [focusedWellId, setFocusedWellId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const segyInputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<WellMapHandle>(null);
+  const sectionRef = useRef<CrossSectionHandle>(null);
+  const crossplotRef = useRef<CrossplotHandle>(null);
+  const [mapZoomPct, setMapZoomPct] = useState<number | null>(null);
+  const [sectionZoomPct, setSectionZoomPct] = useState<number | null>(null);
+  const [crossplotZoomPct, setCrossplotZoomPct] = useState<number | null>(null);
 
   useEffect(() => {
     if (wells.length === 0) { setDepthWindow(null); return; }
@@ -110,15 +146,28 @@ export default function App() {
       // Track data-slice identity so unrelated state changes (selection, project
       // list) don't trigger a save — and the initial hydration above never does.
       const g = useStore.getState();
-      let last = { wells: g.wells, markers: g.markers, activeWellId: g.activeWellId, hiddenTracks: g.hiddenTracks };
+      let last = {
+        wells: g.wells, markers: g.markers, activeWellId: g.activeWellId, hiddenTracks: g.hiddenTracks,
+        faults: g.faults, sections: g.sections, checkshots: g.checkshots, segyLines: g.segyLines, segyVolumes: g.segyVolumes, seismicHorizons: g.seismicHorizons,
+      };
       unsub = useStore.subscribe((s) => {
-        if (s.wells === last.wells && s.markers === last.markers && s.activeWellId === last.activeWellId && s.hiddenTracks === last.hiddenTracks) return;
-        last = { wells: s.wells, markers: s.markers, activeWellId: s.activeWellId, hiddenTracks: s.hiddenTracks };
+        if (
+          s.wells === last.wells && s.markers === last.markers && s.activeWellId === last.activeWellId && s.hiddenTracks === last.hiddenTracks &&
+          s.faults === last.faults && s.sections === last.sections && s.checkshots === last.checkshots && s.segyLines === last.segyLines &&
+          s.segyVolumes === last.segyVolumes && s.seismicHorizons === last.seismicHorizons
+        ) return;
+        last = {
+          wells: s.wells, markers: s.markers, activeWellId: s.activeWellId, hiddenTracks: s.hiddenTracks,
+          faults: s.faults, sections: s.sections, checkshots: s.checkshots, segyLines: s.segyLines, segyVolumes: s.segyVolumes, seismicHorizons: s.seismicHorizons,
+        };
         clearTimeout(timer);
         timer = setTimeout(() => {
           const st = useStore.getState();
           if (!st.projectId) return;
-          persist(st.projectId, st.projectName, { wells: st.wells, markers: st.markers, activeWellId: st.activeWellId, hiddenTracks: st.hiddenTracks })
+          persist(st.projectId, st.projectName, {
+            wells: st.wells, markers: st.markers, activeWellId: st.activeWellId, hiddenTracks: st.hiddenTracks,
+            faults: st.faults, sections: st.sections, checkshots: st.checkshots, segyLines: st.segyLines, segyVolumes: st.segyVolumes, seismicHorizons: st.seismicHorizons,
+          })
             .then((list) => { setProjects(list); setSavedAt(Date.now()); })
             .catch(() => {});
         }, 500);
@@ -142,7 +191,16 @@ export default function App() {
       if (tag === 'input' || tag === 'textarea') return;
 
       if (e.key === 'Escape') { st.selectMarker(null); e.preventDefault(); return; }
-      if (e.key === 'Delete' || e.key === 'Backspace') { st.removeMarker(id); e.preventDefault(); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        const marker = st.markers.find((m) => m.id === id);
+        confirmDestroy({
+          title: `Удалить разбивку «${marker?.label ?? ''}»?`,
+          message: 'Пикировки по всем скважинам для этой разбивки будут удалены без возможности восстановления.',
+          onConfirm: () => st.removeMarker(id),
+        });
+        return;
+      }
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         const wellId = st.activeWellId;
         const marker = st.markers.find((m) => m.id === id);
@@ -155,7 +213,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [confirmDestroy]);
 
   // --- Project management ---
   const onSwitchProject = async (id: string) => {
@@ -198,7 +256,7 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <div className="logo"><Layers size={17} strokeWidth={1.9} /></div>
+          <div className="logo"><Logo size={18} /></div>
         </div>
         <ProjectMenu
           name={projectName}
@@ -219,10 +277,10 @@ export default function App() {
         </nav>
 
         <div className="right">
-          <button className="iconbtn" title="Открыть LAS" onClick={() => inputRef.current?.click()}>
+          <button className="iconbtn" title="Открыть LAS / SEG-Y" onClick={() => inputRef.current?.click()}>
             <FolderOpen size={16} strokeWidth={1.75} />
           </button>
-          <button className="iconbtn" title="Импорт из CSV (разбивки / литология)" onClick={() => setShowImport(true)}>
+          <button className="iconbtn" title="Импорт из CSV: разбивки, литология, инклинометрия, устья" onClick={() => setShowImport(true)}>
             <Milestone size={16} strokeWidth={1.75} />
           </button>
           <ExportMenu bodyRef={bodyRef} depthWindow={effectiveWindow} />
@@ -231,7 +289,11 @@ export default function App() {
             Демо
           </button>
           {wells.length > 0 && (
-            <button className="btn ghost sm" title="Очистить проект" onClick={() => clearAll()}>
+            <button className="btn ghost sm" title="Очистить проект" onClick={() => confirmDestroy({
+              title: 'Очистить проект?',
+              message: `Все скважины, разбивки, разломы, разрезы и импортированные данные проекта «${projectName}» будут удалены без возможности восстановления.`,
+              onConfirm: () => clearAll(),
+            })}>
               Очистить
             </button>
           )}
@@ -252,19 +314,36 @@ export default function App() {
         onDrop={(e) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files) addLasFiles(e.dataTransfer.files); }}
       >
         {tab === 'dashboard' ? (
-          <Dashboard projectName={projectName} wells={wells} markers={markers} />
+          <Dashboard
+            projectName={projectName}
+            wells={wells}
+            markers={markers}
+            onActivateWell={setActiveWell}
+            onSelectMarker={selectMarker}
+            onShow={(t, focus) => {
+              setTab(t as TabKey);
+              if (focus) setFocusRequest(focus);
+            }}
+          />
         ) : tab === 'map' ? (
-          <WellMap wells={wells} markers={markers} activeWellId={activeWellId} onActivate={setActiveWell} />
+          <WellMap ref={mapRef} wells={wells} markers={markers} activeWellId={activeWellId} onActivate={setActiveWell} onZoomChange={setMapZoomPct} />
         ) : tab === 'reserves' ? (
           <ReservesSummary wells={wells} markers={markers} />
         ) : tab === 'seismic' ? (
           <SeismicView wells={wells} markers={markers} />
+        ) : tab === 'scene3d' ? (
+          <Suspense fallback={<div className="scene3d-empty">Загрузка 3D…</div>}>
+            <Scene3D wells={wells} markers={markers} activeWellId={activeWellId} />
+          </Suspense>
+        ) : tab === 'section' ? (
+          <CrossSectionView ref={sectionRef} wells={wells} markers={markers} activeWellId={activeWellId} onZoomChange={setSectionZoomPct} />
         ) : tab === 'crossplot' ? (
-          <CrossplotView wells={wells} markers={markers} activeWellId={activeWellId} />
+          <CrossplotView ref={crossplotRef} wells={wells} markers={markers} activeWellId={activeWellId} onZoomChange={setCrossplotZoomPct} />
         ) : tab === 'tie' ? (
           <WellTie
             wells={wells}
             markers={markers}
+            activeWellId={activeWellId}
             updateMarkerDepth={updateMarkerDepth}
             removeMarkerDepth={removeMarkerDepth}
             renameMarker={renameMarker}
@@ -274,7 +353,7 @@ export default function App() {
         ) : wells.length === 0 ? (
           <div className="empty">
             <div className="welcome">
-              <div className="welcome-logo"><Layers size={34} strokeWidth={1.4} /></div>
+              <div className="welcome-logo"><Logo size={34} /></div>
               <h2>GeoViewer</h2>
               <p className="welcome-sub">Каротаж, корреляция, структурные карты и подсчёт запасов — прямо в браузере.</p>
               <div className="welcome-cta">
@@ -284,6 +363,10 @@ export default function App() {
                 <button className="btn ghost" onClick={() => inputRef.current?.click()}>
                   <Upload size={15} strokeWidth={1.75} /> Загрузить .las
                 </button>
+                <button className="btn ghost" title="Интерпретировать сейсмику можно и без единой скважины"
+                  onClick={() => segyInputRef.current?.click()}>
+                  <Radio size={15} strokeWidth={1.75} /> Импортировать SEG-Y
+                </button>
               </div>
               <div className="welcome-feats">
                 <div className="welcome-feat"><Layers size={18} strokeWidth={1.6} /><b>Корреляция</b><span>разбивки, литология, привязка</span></div>
@@ -291,6 +374,11 @@ export default function App() {
                 <div className="welcome-feat"><Spline size={18} strokeWidth={1.6} /><b>Кроссплоты</b><span>φ–ρ, GR–R, гистограммы</span></div>
               </div>
               <p className="welcome-hint">Перетащите .las сюда · CSV разбивки / литология / инклинометрия — через импорт <Milestone size={12} strokeWidth={1.75} /></p>
+              <input ref={segyInputRef} type="file" accept=".segy,.sgy" multiple hidden
+                onChange={async (e) => {
+                  if (e.target.files) { await addLasFiles(e.target.files); setTab('seismic'); }
+                  e.target.value = '';
+                }} />
             </div>
           </div>
         ) : (
@@ -305,9 +393,13 @@ export default function App() {
                   well={w}
                   active={w.id === activeWellId}
                   onActivate={() => setActiveWell(w.id)}
-                  onRemove={() => removeWell(w.id)}
+                  onRemove={() => confirmDestroy({
+                    title: `Удалить скважину ${w.name}?`,
+                    message: 'Каротаж, литология и все пикировки по этой скважине будут удалены без возможности восстановления.',
+                    onConfirm: () => removeWell(w.id),
+                  })}
                   tool={tool}
-                  onCreateMarker={addMarkerAtDepth}
+                  onCreateMarker={(depth) => addMarkerAtDepth(w.id, depth)}
                   focused={w.id === focusedWellId}
                   onToggleFocus={() => setFocusedWellId((cur) => (cur === w.id ? null : w.id))}
                   hidden={hiddenTracks[w.id]}
@@ -316,6 +408,7 @@ export default function App() {
                   onDepthWindowChange={setDepthWindow}
                   cursorDepth={cursorDepth}
                   onCursorDepth={setCursorDepth}
+                  scrollRef={scrollRef}
                 />
               ))}
             </div>
@@ -325,7 +418,11 @@ export default function App() {
                 wells={wells}
                 onRename={(label) => renameMarker(selectedMarker.id, label)}
                 onDepth={(wellId, depth) => updateMarkerDepth(selectedMarker.id, wellId, depth)}
-                onRemove={() => removeMarker(selectedMarker.id)}
+                onRemove={() => confirmDestroy({
+                  title: `Удалить разбивку «${selectedMarker.label}»?`,
+                  message: 'Пикировки по всем скважинам для этой разбивки будут удалены без возможности восстановления.',
+                  onConfirm: () => removeMarker(selectedMarker.id),
+                })}
                 onClose={() => selectMarker(null)}
               />
             )}
@@ -361,19 +458,44 @@ export default function App() {
       </div>
 
       <footer className="statusbar">
-        {tool === 'marker' ? (
-          <span>Клик по планшету — поставить top · тяни ручку — сдвинуть глубину (снап к пластам)</span>
-        ) : cursorDepth != null ? (
-          <span className="depth">Глубина: {cursorDepth.toFixed(2)}</span>
-        ) : (
-          <span>Колесо — зум по глубине · перетаскивание — панорама</span>
-        )}
+        {tab === 'correlation' ? (
+          tool === 'marker' ? (
+            <span>Клик по планшету — поставить top · тяни ручку — сдвинуть глубину (снап к пластам)</span>
+          ) : cursorDepth != null ? (
+            <span className="depth">Глубина: {cursorDepth.toFixed(2)}</span>
+          ) : (
+            <span>Колесо — зум по глубине · перетаскивание — панорама</span>
+          )
+        ) : TAB_HINTS[tab] ? (
+          <span>{TAB_HINTS[tab]}</span>
+        ) : null}
         <span style={{ flex: 1 }} />
+        {(() => {
+          const zoom = tab === 'map' ? { pct: mapZoomPct, reset: () => mapRef.current?.resetView() }
+            : tab === 'section' ? { pct: sectionZoomPct, reset: () => sectionRef.current?.resetView() }
+            : tab === 'crossplot' ? { pct: crossplotZoomPct, reset: () => crossplotRef.current?.resetView() }
+            : null;
+          if (!zoom || zoom.pct == null) return null;
+          return (
+            <span className="zoom">
+              Зум {zoom.pct}%
+              <button className="zoom-reset" onClick={zoom.reset}>сбросить</button>
+            </span>
+          );
+        })()}
         {savedLabel && <span className="saved">{savedLabel}</span>}
-        <span>{wells.length} скв. · {markers.length} марк. · {TOOLS.find((t) => t.key === tool)?.label}</span>
+        {tab === 'correlation' ? (
+          <span>{wells.length} скв. · {markers.length} марк. · {TOOLS.find((t) => t.key === tool)?.label}</span>
+        ) : tab === 'tie' ? (
+          <span>{wells.length} скв. · {markers.length} марк.</span>
+        ) : (
+          <span>{wells.length} скв.</span>
+        )}
       </footer>
 
       {showImport && <ImportModal onClose={() => setShowImport(false)} />}
+
+      {destroyDialog}
     </div>
   );
 }

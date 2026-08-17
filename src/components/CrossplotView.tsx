@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Marker, Well } from '../types';
 import { collectSamples, curveMnemonics, pearson, histogram } from '../wells/crossplot';
 
@@ -6,6 +6,12 @@ interface Props {
   wells: Well[];
   markers: Marker[];
   activeWellId: string | null;
+  /** Current zoom, as a percentage (null = default/fit) — for the app footer. */
+  onZoomChange?: (pct: number | null) => void;
+}
+
+export interface CrossplotHandle {
+  resetView: () => void;
 }
 
 const RAMP: [number, number, number][] = [
@@ -18,11 +24,18 @@ function ramp(t: number): string {
 }
 const WELL_COLORS = ['#10a1ff', '#FF9500', '#09b37b', '#AF52DE', '#eb5757', '#00c7be', '#f2c94c', '#B6C2CE'];
 
+const tf = (val: number, log: boolean) => (log ? (val > 0 ? Math.log10(val) : NaN) : val);
 const isRes = (m: string) => /res|^rt$|ild|lld|at\d/i.test(m);
+// Plot-rect margins — shared between `draw` and the wheel/drag handlers,
+// which need to convert a cursor pixel back to a data (x, y) point.
+const L = 62, R = 20, T = 22, B = 46;
+const MIN_ZOOM_FRAC = 0.03;
 const niceStep = (raw: number) => { const p = Math.pow(10, Math.floor(Math.log10(raw))); const n = raw / p; return (n >= 5 ? 5 : n >= 2 ? 2 : 1) * p; };
 const fmt = (v: number) => String(+v.toFixed(Math.abs(v) >= 100 ? 0 : Math.abs(v) >= 1 ? 2 : 3));
 
-export function CrossplotView({ wells, markers, activeWellId }: Props) {
+export const CrossplotView = forwardRef<CrossplotHandle, Props>(function CrossplotView(
+  { wells, markers, activeWellId, onZoomChange }, ref,
+) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -35,6 +48,10 @@ export function CrossplotView({ wells, markers, activeWellId }: Props) {
   const [color, setColor] = useState('Глубина');
   const [zoneTop, setZoneTop] = useState('');
   const [zoneBase, setZoneBase] = useState('');
+  // Zoom/pan window (scatter mode only) in the same transformed (log or
+  // linear) space the plot itself draws in — null = auto-fit to the samples.
+  const [view, setView] = useState<{ xMin: number; xMax: number; yMin: number; yMax: number } | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; start: { xMin: number; xMax: number; yMin: number; yMax: number } } | null>(null);
 
   const scoped = useMemo(
     () => (scope === 'active' && activeWellId ? wells.filter((w) => w.id === activeWellId) : wells),
@@ -67,6 +84,26 @@ export function CrossplotView({ wells, markers, activeWellId }: Props) {
   const r = useMemo(() => (mode === 'scatter' ? pearson(samples, logX, logY) : NaN), [samples, logX, logY, mode]);
   const hist = useMemo(() => (mode === 'hist' ? histogram(samples.map((s) => s.x), 32) : null), [samples, mode]);
 
+  /** Auto-fit domain in transformed (log/linear) space — the "no zoom"
+   * default, and the outer bound zoom/pan can't go past. Hoisted out of
+   * `draw` so the wheel/drag handlers can reference it too. */
+  const autoDomain = useMemo(() => {
+    let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+    for (const s of samples) {
+      const tx = tf(s.x, logX), ty = tf(s.y, logY);
+      if (Number.isFinite(tx)) { if (tx < xMin) xMin = tx; if (tx > xMax) xMax = tx; }
+      if (Number.isFinite(ty)) { if (ty < yMin) yMin = ty; if (ty > yMax) yMax = ty; }
+    }
+    if (!(xMax > xMin)) xMax = xMin + 1;
+    if (!(yMax > yMin)) yMax = yMin + 1;
+    if (!Number.isFinite(xMin) || !Number.isFinite(yMin)) return null;
+    return { xMin, xMax, yMin, yMax };
+  }, [samples, logX, logY]);
+
+  // A zoom/pan window for one curve pairing (or transform) makes no sense
+  // for another — reset whenever what's being plotted changes.
+  useEffect(() => { setView(null); }, [x, y, logX, logY, mode, scope, zoneTop, zoneBase]);
+
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -93,7 +130,6 @@ export function CrossplotView({ wells, markers, activeWellId }: Props) {
     const text = v('--text', '#f4f7fa'), text2 = v('--text-2', '#97b2c4'), text3 = v('--text-3', '#636e83'), grid = v('--plate-grid', 'rgba(151,178,196,0.10)'), border = v('--border', 'rgba(151,178,196,0.16)');
     ctx.font = '11px ui-monospace, monospace';
 
-    const L = 62, R = 20, T = 22, B = 46;
     const pw = size.w - L - R, ph = size.h - T - B;
     if (pw < 20 || ph < 20) return;
 
@@ -128,16 +164,11 @@ export function CrossplotView({ wells, markers, activeWellId }: Props) {
 
     // --- Scatter ---
     if (samples.length === 0) { ctx.fillStyle = text3; ctx.fillText('Нет общих сэмплов для выбранных кривых', L + 8, T + 16); ctx.strokeStyle = border; ctx.strokeRect(L, T, pw, ph); return; }
-    const tf = (val: number, log: boolean) => (log ? (val > 0 ? Math.log10(val) : NaN) : val);
-    let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity, zmin = Infinity, zmax = -Infinity;
-    for (const s of samples) {
-      const tx = tf(s.x, logX), ty = tf(s.y, logY);
-      if (Number.isFinite(tx)) { if (tx < xmin) xmin = tx; if (tx > xmax) xmax = tx; }
-      if (Number.isFinite(ty)) { if (ty < ymin) ymin = ty; if (ty > ymax) ymax = ty; }
-      if (Number.isFinite(s.z)) { if (s.z < zmin) zmin = s.z; if (s.z > zmax) zmax = s.z; }
-    }
-    if (!(xmax > xmin)) xmax = xmin + 1;
-    if (!(ymax > ymin)) ymax = ymin + 1;
+    if (!autoDomain) return;
+    let zmin = Infinity, zmax = -Infinity;
+    for (const s of samples) if (Number.isFinite(s.z)) { if (s.z < zmin) zmin = s.z; if (s.z > zmax) zmax = s.z; }
+    const xmin = view?.xMin ?? autoDomain.xMin, xmax = view?.xMax ?? autoDomain.xMax;
+    const ymin = view?.yMin ?? autoDomain.yMin, ymax = view?.yMax ?? autoDomain.yMax;
     const px = (tx: number) => L + ((tx - xmin) / (xmax - xmin)) * pw;
     const py = (ty: number) => T + ph - ((ty - ymin) / (ymax - ymin)) * ph;
 
@@ -149,7 +180,9 @@ export function CrossplotView({ wells, markers, activeWellId }: Props) {
     if (logX) drawXTicks(decades(xmin, xmax)); else { const st = niceStep((xmax - xmin) / 7); const t: number[] = []; for (let vv = Math.ceil(xmin / st) * st; vv <= xmax + 1e-9; vv += st) t.push(vv); drawXTicks(t); }
     if (logY) drawYTicks(decades(ymin, ymax)); else { const st = niceStep((ymax - ymin) / 6); const t: number[] = []; for (let vv = Math.ceil(ymin / st) * st; vv <= ymax + 1e-9; vv += st) t.push(vv); drawYTicks(t); }
 
-    // points
+    // points — clipped, since zoomed in some can fall outside the plot rect.
+    ctx.save();
+    ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
     ctx.globalAlpha = samples.length > 4000 ? 0.35 : 0.6;
     const zspan = zmax - zmin || 1;
     for (const s of samples) {
@@ -160,6 +193,7 @@ export function CrossplotView({ wells, markers, activeWellId }: Props) {
       ctx.beginPath(); ctx.arc(px(tx), py(ty), 2.2, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
+    ctx.restore();
 
     ctx.strokeStyle = border; ctx.strokeRect(L, T, pw, ph);
     // axis titles
@@ -193,7 +227,73 @@ export function CrossplotView({ wells, markers, activeWellId }: Props) {
       ctx.textAlign = 'right'; ctx.fillText(fmt(zmax), lx + lw, ly + lh + 12);
       ctx.textAlign = 'center'; ctx.fillText(color, lx + lw / 2, ly - 3);
     }
-  }, [samples, mode, logX, logY, size, x, y, color, byWell, r, hist, zone, scoped, wellIdx]);
+  }, [samples, mode, logX, logY, size, x, y, color, byWell, r, hist, zone, scoped, wellIdx, autoDomain, view]);
+
+  const clampWindow = (lo: number, span: number, boundLo: number, boundHi: number): [number, number] => {
+    let a = lo, b = lo + span;
+    if (a < boundLo) { a = boundLo; b = boundLo + span; }
+    if (b > boundHi) { b = boundHi; a = boundHi - span; }
+    return [a, b];
+  };
+  const currentDomain = () => ({
+    xMin: view?.xMin ?? autoDomain?.xMin ?? 0, xMax: view?.xMax ?? autoDomain?.xMax ?? 1,
+    yMin: view?.yMin ?? autoDomain?.yMin ?? 0, yMax: view?.yMax ?? autoDomain?.yMax ?? 1,
+  });
+  const resetView = () => setView(null);
+  useImperativeHandle(ref, () => ({ resetView }), []);
+  useEffect(() => {
+    if (!view || !autoDomain) { onZoomChange?.(null); return; }
+    onZoomChange?.(Math.round(((autoDomain.xMax - autoDomain.xMin) / (view.xMax - view.xMin)) * 100));
+  }, [view, autoDomain, onZoomChange]);
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (mode !== 'scatter' || !autoDomain) return;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, start: currentDomain() };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const drag = dragRef.current;
+    if (!drag || !autoDomain) return;
+    // Already showing the full extent — a pan has nowhere to go, so don't
+    // manufacture a "zoomed" view (and footer chip) that's identical to auto.
+    if (drag.start.xMax - drag.start.xMin >= autoDomain.xMax - autoDomain.xMin
+      && drag.start.yMax - drag.start.yMin >= autoDomain.yMax - autoDomain.yMin) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pw = Math.max(10, rect.width - L - R), ph = Math.max(10, rect.height - T - B);
+    const dx = -((e.clientX - drag.startX) / pw) * (drag.start.xMax - drag.start.xMin);
+    const dy = ((e.clientY - drag.startY) / ph) * (drag.start.yMax - drag.start.yMin);
+    const [xMin, xMax] = clampWindow(drag.start.xMin + dx, drag.start.xMax - drag.start.xMin, autoDomain.xMin, autoDomain.xMax);
+    const [yMin, yMax] = clampWindow(drag.start.yMin + dy, drag.start.yMax - drag.start.yMin, autoDomain.yMin, autoDomain.yMax);
+    setView({ xMin, xMax, yMin, yMax });
+  };
+  const onPointerUp = () => { dragRef.current = null; };
+
+  // Native, non-passive listener — React's onWheel is registered passive at
+  // the root, so preventDefault() inside a synthetic handler throws.
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el || mode !== 'scatter' || !autoDomain) return;
+    const onWheelNative = (e: globalThis.WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const pw = Math.max(10, rect.width - L - R), ph = Math.max(10, rect.height - T - B);
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const { xMin, xMax, yMin, yMax } = currentDomain();
+      const xAtCursor = xMin + ((mx - L) / pw) * (xMax - xMin);
+      const yAtCursor = yMax - ((my - T) / ph) * (yMax - yMin);
+      const spanFactor = Math.exp(e.deltaY * 0.0015);
+      const fullX = autoDomain.xMax - autoDomain.xMin, fullY = autoDomain.yMax - autoDomain.yMin;
+      const newXSpan = Math.min(fullX, Math.max(fullX * MIN_ZOOM_FRAC, (xMax - xMin) * spanFactor));
+      const newYSpan = Math.min(fullY, Math.max(fullY * MIN_ZOOM_FRAC, (yMax - yMin) * spanFactor));
+      const relX = (mx - L) / pw, relY = 1 - (my - T) / ph;
+      const [newXMin, newXMax] = clampWindow(xAtCursor - relX * newXSpan, newXSpan, autoDomain.xMin, autoDomain.xMax);
+      const [newYMin, newYMax] = clampWindow(yAtCursor - relY * newYSpan, newYSpan, autoDomain.yMin, autoDomain.yMax);
+      setView({ xMin: newXMin, xMax: newXMax, yMin: newYMin, yMax: newYMax });
+    };
+    el.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', onWheelNative);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, autoDomain, view]);
 
   if (wells.length === 0) {
     return <div className="placeholder"><div className="pc"><h3>Кроссплоты</h3><p>Загрузите скважины с каротажем — здесь появится кросс-анализ кривых (нейтрон–плотность, GR–сопротивление и др.).</p></div></div>;
@@ -241,8 +341,9 @@ export function CrossplotView({ wells, markers, activeWellId }: Props) {
         )}
       </div>
       <div className="xplot-plot" ref={wrapRef}>
-        <canvas ref={canvasRef} className="xplot-canvas" style={{ width: size.w, height: size.h }} />
+        <canvas ref={canvasRef} className="xplot-canvas" style={{ width: size.w, height: size.h, cursor: mode === 'scatter' ? 'grab' : undefined }}
+          onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp} />
       </div>
     </div>
   );
-}
+});
