@@ -30,7 +30,12 @@ interface Props {
 }
 
 type LineId = string;
-interface EditState { label: string; color: string; nodes: HorizonNode[] }
+/**
+ * `dirty` — node edits (drags, well-tie) made since the pick was last saved to
+ * the map, or since it was (re)tracked. A fresh auto-track is not "dirty": it's
+ * reproducible in one click, so throwing it away costs nothing; a drag isn't.
+ */
+interface EditState { label: string; color: string; nodes: HorizonNode[]; dirty: boolean }
 
 const LINES: { id: LineId; label: string; axis: 'x' | 'y' }[] = [
   { id: 'A', label: 'W → E', axis: 'x' },
@@ -382,7 +387,7 @@ export function SeismicView({ wells, markers }: Props) {
 
   const snap = (label: string, color: string, seedTwt: number) => {
     if (!field) return;
-    setEdit({ label, color, nodes: sampleNodes(autoTrackHorizon(field.section, seedTwt), NODE_COUNT) });
+    setEdit({ label, color, nodes: sampleNodes(autoTrackHorizon(field.section, seedTwt), NODE_COUNT), dirty: false });
   };
 
   // Fit v0/k so the wells' picked times convert to their known depths, and pull
@@ -399,7 +404,7 @@ export function SeismicView({ wells, markers }: Props) {
       const next = { ...prev };
       for (const id of ['A', 'B'] as LineId[]) {
         const f = fields[id], e = prev[id];
-        if (f && e) next[id] = { ...e, nodes: tieToWells(f, e.label, e.nodes) };
+        if (f && e) next[id] = { ...e, nodes: tieToWells(f, e.label, e.nodes), dirty: true };
       }
       return next;
     });
@@ -515,7 +520,7 @@ export function SeismicView({ wells, markers }: Props) {
     }
     const twt = clamp(geom.twtOfY(my), geom.t0, geom.tEnd);
     const nodes = edit.nodes.map((nd, k) => (k === dragRef.current ? { ...nd, twt } : nd));
-    setEdit({ ...edit, nodes });
+    setEdit({ ...edit, nodes, dirty: true });
   };
   const onUp = (e: PointerEvent<HTMLCanvasElement>) => {
     if (dragRef.current != null) { canvasRef.current!.releasePointerCapture(e.pointerId); dragRef.current = null; }
@@ -752,18 +757,26 @@ export function SeismicView({ wells, markers }: Props) {
   const inMap = edit ? !!seismicHorizons[edit.label]?.[lineId] : false;
   // Picking a different horizon (or starting over on an imported line)
   // overwrites `edits[lineId]` outright — confirm first when that would
-  // throw away node drags nobody's told the map about yet.
+  // throw away work nobody's told the map about yet: a pick never saved at
+  // all, or one saved earlier and dragged since.
   const switchHorizon = (next: () => void) => {
-    if (edit && !inMap) {
+    if (edit && (!inMap || edit.dirty)) {
       confirmSwitch({
         title: `Переключить горизонт, не сохранив «${edit.label}»?`,
-        message: 'Этот горизонт ещё не сохранён в карту («Использовать в карте») — переключение сотрёт правки узлов без возможности восстановления.',
+        message: inMap
+          ? 'Узлы правились после последнего сохранения в карту («Обновить в карте») — переключение отбросит эти правки без возможности восстановления.'
+          : 'Этот горизонт ещё не сохранён в карту («Использовать в карте») — переключение сотрёт правки узлов без возможности восстановления.',
         confirmLabel: 'Переключить',
         onConfirm: next,
       });
     } else {
       next();
     }
+  };
+  const saveToMap = () => {
+    if (!edit || !pick) return;
+    setSeismicHorizon(edit.label, lineId, pick.controls);
+    setEdit({ ...edit, dirty: false });
   };
 
   return (
@@ -902,7 +915,7 @@ export function SeismicView({ wells, markers }: Props) {
           ) : (
             <>
               <div className="seismic-note">Горизонт → контрольные точки → каркас (тот же <code>buildSurface</code>, что и для скважин).</div>
-              <button className="seismic-apply" onClick={() => setSeismicHorizon(edit.label, lineId, pick.controls)}>
+              <button className="seismic-apply" onClick={saveToMap}>
                 {inMap ? 'Обновить в карте' : 'Использовать в карте'}
               </button>
               {inMap && <button className="seismic-remove" onClick={() => clearSeismicHorizon(edit.label, lineId)}>убрать из карты</button>}
