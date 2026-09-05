@@ -9,3 +9,5 @@ export type { SegyFile, SegyTrace, SegyLine, SegyFormat, SegyOptions, SegyHeader
 export { sliceInline, sliceCrossline, sliceTime } from './volume';
 export type { VolumeSlice, TimeSlice } from './volume';
 export { seismicColor, buildSeismicRaster, buildTimeSliceRaster } from './raster';
+export { trackHorizon3D, surfaceProfile, surfaceStats, surfaceControls, controlStepFor } from './track3d';
+export type { Seed3D, Track3DOptions, HorizonSurface, SurfaceStats } from './track3d';

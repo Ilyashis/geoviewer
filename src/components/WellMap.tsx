@@ -172,6 +172,18 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
   );
   const seismicLines = useMemo(() => Object.values(seismicByLine ?? {}).filter((pts) => pts.length > 0), [seismicByLine]);
   const seismicControls = useMemo(() => (seismicLines.length ? seismicLines.flat() : undefined), [seismicLines]);
+  // A cube's contribution is a subsampled (il, xl) GRID of points, not a
+  // transect — joining them in order would draw a raster-scan zigzag, so
+  // they're shown as dots while a line's picks stay a path.
+  const segyVolumes = useStore((s) => s.segyVolumes);
+  const seismicGrids = useMemo(() => {
+    const volumeIds = new Set(segyVolumes.map((v) => v.id));
+    return Object.entries(seismicByLine ?? {}).filter(([id, pts]) => volumeIds.has(id) && pts.length > 0).map(([, pts]) => pts);
+  }, [seismicByLine, segyVolumes]);
+  const seismicTransects = useMemo(() => {
+    const volumeIds = new Set(segyVolumes.map((v) => v.id));
+    return Object.entries(seismicByLine ?? {}).filter(([id, pts]) => !volumeIds.has(id) && pts.length > 0).map(([, pts]) => pts);
+  }, [seismicByLine, segyVolumes]);
 
   const field = useMemo<Field | null>(() => {
     // valueMd → the mapped value plus the MD used to place the (deviated) point.
@@ -669,8 +681,9 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
   // The seismic horizon transects that feed the current structure surface — one
   // path per contributing line, so picks on different lines don't zigzag together.
   const seismicPaths = layout
-    ? seismicLines.map((pts) => pts.map((c, i) => { const p = layout.toPx(c.x, c.y); return `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`; }).join(' '))
+    ? seismicTransects.map((pts) => pts.map((c, i) => { const p = layout.toPx(c.x, c.y); return `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`; }).join(' '))
     : [];
+  const seismicDots = layout ? seismicGrids.flatMap((pts) => pts.map((c) => layout.toPx(c.x, c.y))) : [];
 
   const pinchScreenPts = layout ? pinchPts.map((p) => layout.toPx(p.x, p.y)) : [];
   const pinchClosed = pinchOn && pinchPts.length >= 3;
@@ -742,6 +755,11 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
           <path key={`seis-${i}`} d={d} fill="none" stroke="var(--accent-2)" strokeWidth={2.5}
             strokeOpacity={0.92} strokeLinecap="round" strokeLinejoin="round" />
         ))}
+        {seismicDots.length > 0 && (
+          <g fill="var(--accent-2)" fillOpacity={0.75}>
+            {seismicDots.map((p, i) => <circle key={`seisdot-${i}`} cx={p.px} cy={p.py} r={1.6} />)}
+          </g>
+        )}
         {pts.map((p) => {
           const active = p.id === activeWellId;
           const flip = p.px > size.w - (p.name.length * 8 + 34);
@@ -936,7 +954,7 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
               </div>
             )}
             {seismicControls && seismicControls.length > 0 && (
-              <div className="map-leg-row"><span className="map-leg-seis" /> сейсмо-горизонт ({seismicControls.length} тчк{seismicLines.length > 1 ? `, ${seismicLines.length} лин.` : ''})</div>
+              <div className="map-leg-row"><span className="map-leg-seis" /> сейсмо-горизонт ({seismicControls.length} тчк{seismicTransects.length > 0 && seismicGrids.length > 0 ? `: ${seismicTransects.length} лин. + ${seismicGrids.length} куб` : seismicTransects.length > 1 ? `, ${seismicTransects.length} лин.` : seismicGrids.length > 0 ? ', куб' : ''})</div>
             )}
           </>
         ) : (
