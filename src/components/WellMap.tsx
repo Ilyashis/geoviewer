@@ -7,6 +7,7 @@ import { estimateThrow } from '../core/geom/fault';
 import { buildSurface, type ControlPoint } from '../core/framework';
 import { clusterPoints, clusterGap } from '../core/geom/cluster';
 import { SurfacePicker } from './SurfacePicker';
+import { mapSurfaces, mapExtentPoints, type MapSurface } from './mapSurfaces';
 import { useStore } from '../store';
 import type { FaultDef } from '../store/slices/framework';
 import { computeTrajectory, positionAtMd, type TrajPoint } from '../wells/deviation';
@@ -138,12 +139,18 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
     );
   }, [markers, coordWells, schematic]);
 
+  const seismicHorizons = useStore((s) => s.seismicHorizons);
+  // Structure surfaces: mappable пласты plus seismic-only horizons (a cube's
+  // «Горизонт N», a numbered pick, or a пласт with too few well picks to map
+  // from wells but a seismic pick sent to the map) — see mapSurfaces.ts.
+  // Isochore (top/base) stays пласт-only: it needs a pick per well.
+  const surfaces = useMemo(() => mapSurfaces(mappable, markers, seismicHorizons, schematic), [mappable, markers, seismicHorizons, schematic]);
   const surfOptions = useMemo(
-    () => mappable.map((m) => ({ id: m.id, label: m.label, color: m.color })),
-    [mappable],
+    () => surfaces.map((s) => ({ id: s.id, label: s.label, color: s.color })),
+    [surfaces],
   );
 
-  const surface = mappable.find((m) => m.id === surfaceId) ?? mappable[0] ?? null;
+  const surface: MapSurface | null = surfaces.find((s) => s.id === surfaceId) ?? surfaces[0] ?? null;
   const top = mappable.find((m) => m.id === topId) ?? mappable[0] ?? null;
   const base = mappable.find((m) => m.id === baseId) ?? mappable.find((m) => m.id !== top?.id) ?? null;
 
@@ -162,7 +169,6 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
   // it shouldn't shift just because the user switched tabs.
   const structurePointsFor = (marker: Marker): ControlPoint[] => structuralControlPoints(marker, coordWells, trajs);
 
-  const seismicHorizons = useStore((s) => s.seismicHorizons);
   // Seismic-derived horizon control points for the selected structure surface,
   // keyed by which line contributed them (a horizon can be picked on more than
   // one seismic line; each keeps its own transect).
@@ -206,8 +212,13 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
 
     if (mode === 'structure') {
       if (!surface) return null;
+      const marker = surface.marker;
+      // A seismic-only surface has no well picks to place: its control points
+      // are the seismic ones alone, and the title says so — a map built from
+      // seismic must not read as if wells confirmed it.
+      if (!marker) return build(() => null, `${surface.label} · TVDSS, м · сейсмика`, seismicControls);
       return build((w) => {
-        const md = surface.depths[w.id];
+        const md = marker.depths[w.id];
         return Number.isFinite(md) ? { value: tvdssAt(w, md), posMd: md } : null;
       }, `${surface.label} · TVDSS, м`, seismicControls);
     }
@@ -228,9 +239,13 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
     return () => ro.disconnect();
   }, []);
 
+  // What the view fits: wells AND every seismic horizon sent to the map, so a
+  // cube horizon lying outside the wells isn't clipped by a well-only
+  // extent — and a project with no wells at all still has something to fit.
+  const extentPts = useMemo(() => mapExtentPoints(positions, seismicHorizons, schematic), [positions, seismicHorizons, schematic]);
   const layout = useMemo(() => {
-    if (positions.length === 0) return null;
-    const xs = positions.map((p) => p.x), ys = positions.map((p) => p.y);
+    if (extentPts.length === 0) return null;
+    const xs = extentPts.map((p) => p.x), ys = extentPts.map((p) => p.y);
     const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
     const spanX = Math.max(maxX - minX, 1), spanY = Math.max(maxY - minY, 1);
     const scale = Math.min((size.w - 2 * PAD) / spanX, (size.h - 2 * PAD) / spanY);
@@ -238,7 +253,7 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
     const toPx = (x: number, y: number) => ({ px: ox + (x - minX) * scale, py: oy + (maxY - y) * scale });
     const fromPx = (px: number, py: number): Pt => ({ x: minX + (px - ox) / scale, y: maxY - (py - oy) / scale });
     return { minX, maxX, minY, maxY, scale, toPx, fromPx, pts: positions.map((p) => ({ ...p, ...toPx(p.x, p.y) })) };
-  }, [positions, size]);
+  }, [extentPts, positions, size]);
 
   // Shared mesh (data space, resolution independent of pixel size) so the field
   // grid and any structure grid align cell-for-cell.
@@ -437,9 +452,9 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
   }, [faults, mappable, coordWells, trajs]);
 
   // The пласт whose structure is being gridded — the one a displayed throw refers to.
-  const viewMarker = mode === 'structure' ? surface : top;
+  const viewSurfaceId = mode === 'structure' ? surface?.id ?? null : top?.id ?? null;
   const throwAtView = (f: FaultDef): number | null =>
-    (viewMarker ? faultThrows[f.id]?.[viewMarker.id] : null) ?? null;
+    (viewSurfaceId ? faultThrows[f.id]?.[viewSurfaceId] : null) ?? null;
 
   // Only faults active for the current surface/zone count toward the reserves
   // report — a fault that doesn't cut this пласт didn't touch this volume.
@@ -447,7 +462,7 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
     if (activeFaults.length === 0) return null;
     const throws = activeFaults.map(throwAtView).filter((t): t is number => t != null).map(Math.abs);
     return { count: activeFaults.length, maxThrow: throws.length ? Math.max(...throws) : null };
-  }, [activeFaults, faultThrows, viewMarker]);
+  }, [activeFaults, faultThrows, viewSurfaceId]);
 
   const volResult = useMemo(
     () => (mode === 'isochore' && grid ? volumetrics(grid, effVol, contact, pinchClip) : null),
@@ -649,18 +664,25 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
     return () => el.removeEventListener('wheel', onWheelNative);
   }, [layout]);
 
-  if (wells.length === 0) {
+  // No wells is no longer "no map": a seismic horizon sent here from a line
+  // or a cube is a structure surface in its own right.
+  if (wells.length === 0 && surfaces.length === 0) {
     return (
       <div className="placeholder">
         <div className="pc">
           <h3>Карта</h3>
-          <p>Загрузите скважины — здесь появится их расположение, профиль и карты по кровлям (структура, толщины).</p>
+          <p>Загрузите скважины — здесь появится их расположение, профиль и карты по кровлям (структура, толщины). Либо снимите горизонт в «Сейсмике» и отправьте его в карту — структурная карта строится и без скважин.</p>
         </div>
       </div>
     );
   }
 
-  const activeTab = mappable.length > 0 ? panelTab : 'sections';
+  // Пласт needs a surface of any kind; Разломы still need well пласты (a
+  // fault is tied to пласт ids); Разрезы only need a map to draw on.
+  const activeTab: 'surface' | 'faults' | 'sections' =
+    panelTab === 'surface' ? (surfaces.length > 0 ? 'surface' : 'sections')
+    : panelTab === 'faults' ? (mappable.length > 0 ? 'faults' : surfaces.length > 0 ? 'surface' : 'sections')
+    : 'sections';
   const pts = layout?.pts ?? [];
   const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.px.toFixed(1)} ${p.py.toFixed(1)}`).join(' ');
 
@@ -784,10 +806,10 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
           is forced empty whenever schematic), so this one condition covers
           "is there anything at all for this panel to show". Пласт/Разломы
           tabs are gated on mappable the same way the old separate panels were. */}
-      {!schematic && coordWells.length > 0 && (
+      {!schematic && (coordWells.length > 0 || surfaces.length > 0) && (
         <div className="map-panel">
           <div className="map-tabs">
-            {mappable.length > 0 && (
+            {surfaces.length > 0 && (
               <button className={`map-tab-btn ${activeTab === 'surface' ? 'on' : ''}`} onClick={() => setPanelTab('surface')}>
                 Пласт
               </button>
@@ -802,7 +824,7 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
             </button>
           </div>
 
-          {activeTab === 'surface' && mappable.length > 0 && (
+          {activeTab === 'surface' && surfaces.length > 0 && (
             <>
               <div className="map-mode">
                 <button className={`map-mode-btn ${mode === 'structure' ? 'on' : ''}`} onClick={() => setMode('structure')}>Структура</button>
@@ -1093,8 +1115,8 @@ export const WellMap = forwardRef<WellMapHandle, Props>(function WellMap(
       )}
 
       {schematic && <div className="map-badge">Условная раскладка — координаты не заданы</div>}
-      {!schematic && mappable.length === 0 && (
-        <div className="map-badge">Для карт нужны ≥3 скважины с пикировкой одного пласта</div>
+      {!schematic && surfaces.length === 0 && (
+        <div className="map-badge">Для карт нужны ≥3 скважины с пикировкой одного пласта — или горизонт, отправленный в карту из «Сейсмики»</div>
       )}
       {!schematic && mode === 'isochore' && mappable.length >= 2 && !field && (
         <div className="map-badge">Мало общих пикировок для изохоры — выберите два пласта с ≥3 общими скважинами</div>

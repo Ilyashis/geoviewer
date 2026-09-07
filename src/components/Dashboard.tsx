@@ -88,12 +88,16 @@ export function Dashboard({ projectName, wells, markers, onActivateWell, onSelec
     { key: 'horizons', label: 'Сейсмогоризонты', count: horizonRows.length },
   ];
 
-  if (wells.length === 0) {
+  // The placeholder is for an EMPTY project, not a well-less one: a cube, a
+  // SEG-Y line or a seismic horizon is project data this index exists to
+  // show, and the map now builds from a seismic horizon with no wells at all.
+  const empty = dataTabs.every((t) => t.count === 0);
+  if (empty) {
     return (
       <div className="placeholder">
         <div className="pc">
           <h3>Дашборд</h3>
-          <p>Загрузите скважины — здесь появится сводка по проекту.</p>
+          <p>Загрузите скважины или SEG-Y — здесь появится сводка по проекту.</p>
         </div>
       </div>
     );
