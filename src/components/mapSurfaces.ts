@@ -48,6 +48,13 @@ export function mapSurfaces(mappable: Marker[], allMarkers: Marker[], seismic: S
   return out;
 }
 
+/** Every seismic control point saved under `label`, across all lines and
+ * cubes, in the order stored. Depth as saved (TVDSS, positive down) — the
+ * caller decides the sign convention of its own space. */
+export function seismicPointsFor(seismic: SeismicHorizons, label: string): ControlPoint[] {
+  return Object.values(seismic[label] ?? {}).flat();
+}
+
 /**
  * Every point the map should fit into view: well positions plus ALL seismic
  * horizon control points — not just the selected surface's, so switching
