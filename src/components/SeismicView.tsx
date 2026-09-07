@@ -23,6 +23,7 @@ import { computeTrajectory, type TrajPoint } from '../wells/deviation';
 import { structuralControlPoints } from '../wells/structure';
 import { useStore } from '../store';
 import { useConfirm } from '../hooks/useConfirm';
+import { horizonColorFor } from '../seismic/horizonColor';
 
 interface Props {
   wells: Well[];
@@ -48,19 +49,6 @@ const NODE_COUNT = 14; // editable nodes along the horizon
 const CONV_PRESETS: Record<'const' | 'linear', VelocityModel> = { const: DEFAULT_VELOCITY, linear: COMPACTION };
 const niceStep = (raw: number) => { const p = Math.pow(10, Math.floor(Math.log10(raw))); const n = raw / p; return (n >= 5 ? 5 : n >= 2 ? 2 : 1) * p; };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-// A well top always has a colour (used to pick this label's colour while
-// editing); an imported line's numbered pick ("1", "2"…) doesn't, since
-// nothing carries colour into the saved ControlPoint[]. Falls back to a
-// small fixed palette, picked deterministically from the label so the same
-// horizon keeps the same colour across renders and reloads.
-const FALLBACK_HORIZON_COLORS = ['#10a1ff', '#FF9500', '#09b37b', '#AF52DE', '#eb5757', '#00c7be', '#f2c94c', '#B6C2CE'];
-function horizonColorFor(label: string, horizonList: { label: string; color: string }[]): string {
-  const known = horizonList.find((h) => h.label === label);
-  if (known) return known.color;
-  let hash = 0;
-  for (let i = 0; i < label.length; i++) hash = (hash * 31 + label.charCodeAt(i)) | 0;
-  return FALLBACK_HORIZON_COLORS[Math.abs(hash) % FALLBACK_HORIZON_COLORS.length];
-}
 
 /**
  * 2D seismic: two independent lines (W→E and S→N) through the same wells, each

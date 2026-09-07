@@ -11,3 +11,4 @@ export type { VolumeSlice, TimeSlice } from './volume';
 export { seismicColor, buildSeismicRaster, buildTimeSliceRaster } from './raster';
 export { trackHorizon3D, surfaceProfile, surfaceStats, surfaceControls, controlStepFor } from './track3d';
 export type { Seed3D, Track3DOptions, HorizonSurface, SurfaceStats } from './track3d';
+export { horizonColorFor, FALLBACK_HORIZON_COLORS } from './horizonColor';
