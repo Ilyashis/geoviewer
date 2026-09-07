@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapSurfaces, mapExtentPoints } from './mapSurfaces';
+import { mapSurfaces, mapExtentPoints, seismicPointsFor } from './mapSurfaces';
 import type { Marker } from '../types';
 import { horizonColorFor } from '../seismic/horizonColor';
 
@@ -40,6 +40,15 @@ describe('mapSurfaces', () => {
   it('adds nothing seismic in a schematic layout', () => {
     const s = mapSurfaces([], [], { 'Top B': { A: pts(5) } }, true);
     expect(s).toEqual([]);
+  });
+});
+
+describe('seismicPointsFor', () => {
+  it('flattens every line and cube under one label, and is empty for an unknown label', () => {
+    const s = { H: { A: pts(2), 'segyvol-x': pts(3) }, Other: { A: pts(9) } };
+    expect(seismicPointsFor(s, 'H')).toHaveLength(5);
+    expect(seismicPointsFor(s, 'H')[0]).toEqual({ x: 0, y: 0, z: 2000 });
+    expect(seismicPointsFor(s, 'nope')).toEqual([]);
   });
 });
 

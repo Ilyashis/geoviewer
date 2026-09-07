@@ -11,6 +11,7 @@ import { metricWells } from '../wells/coords';
 import { computeTrajectory, positionAtMd, tvdAtMd, type TrajPoint } from '../wells/deviation';
 import { useStore } from '../store';
 import { faultCurtain, surfaceMesh } from './scene3d/mesh';
+import { mapSurfaces, seismicPointsFor } from './mapSurfaces';
 
 interface Props {
   wells: Well[];
@@ -64,6 +65,7 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
   const [hidden, setHidden] = useState<string[]>([]);
 
   const faults = useStore((s) => s.faults);
+  const seismicHorizons = useStore((s) => s.seismicHorizons);
 
   const metric = useMemo(() => metricWells(wells), [wells]);
   const coordWells = useMemo(
@@ -97,22 +99,31 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
     );
   }, [markers, coordWells]);
 
-  const shown = useMemo(() => mappable.filter((m) => !hidden.includes(m.id)), [mappable, hidden]);
+  /** The same surface list the map offers — mappable пласты plus every
+   * seismic-only horizon — so what was sent to the map is what's here. */
+  const surfaceDefs = useMemo(() => mapSurfaces(mappable, markers, seismicHorizons, false), [mappable, markers, seismicHorizons]);
+  const shown = useMemo(() => surfaceDefs.filter((s) => !hidden.includes(s.id)), [surfaceDefs, hidden]);
 
   const controlsFor = useMemo(() => {
     const out = new Map<string, ControlPoint[]>();
-    for (const m of mappable) {
+    for (const s of surfaceDefs) {
       const pts: ControlPoint[] = [];
-      for (const w of coordWells) {
-        const md = m.depths[w.id];
-        if (!Number.isFinite(md)) continue;
-        const p = posAt(w, md);
-        pts.push({ x: p.x, y: p.y, z: elevAt(w, md) });
+      if (s.marker) {
+        for (const w of coordWells) {
+          const md = s.marker.depths[w.id];
+          if (!Number.isFinite(md)) continue;
+          const p = posAt(w, md);
+          pts.push({ x: p.x, y: p.y, z: elevAt(w, md) });
+        }
       }
-      out.set(m.id, pts);
+      // Seismic picks of this label join the пласт's own, as on the map; for
+      // a seismic-only surface they are all there is. Saved as depth
+      // (positive down), flipped to elevation here like everything else.
+      for (const c of seismicPointsFor(seismicHorizons, s.label)) pts.push({ x: c.x, y: c.y, z: -c.z });
+      out.set(s.id, pts);
     }
     return out;
-  }, [mappable, coordWells, trajs]);
+  }, [surfaceDefs, coordWells, trajs, seismicHorizons]);
 
   /**
    * Bounds follow the largest cluster of wells, not all of them: one stray
@@ -122,8 +133,7 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
    */
   const framing = useMemo(() => {
     const heads = coordWells.map((w) => ({ x: w.x!, y: w.y!, z: headElev(w) }));
-    if (heads.length === 0) return null;
-    const main = new Set(clusterPoints(heads)[0]?.members ?? heads.map((_, i) => i));
+    const main = heads.length ? new Set(clusterPoints(heads)[0]?.members ?? heads.map((_, i) => i)) : new Set<number>();
     const inMain = coordWells.filter((_, i) => main.has(i));
 
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
@@ -134,18 +144,22 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
     };
     for (const w of inMain) {
       eat(w.x!, w.y!, headElev(w));
-      for (const m of shown) {
-        const md = m.depths[w.id];
-        if (!Number.isFinite(md)) continue;
+      for (const s of shown) {
+        const md = s.marker?.depths[w.id];
+        if (md === undefined || !Number.isFinite(md)) continue;
         const p = posAt(w, md);
         eat(p.x, p.y, elevAt(w, md));
       }
     }
+    // Seismic points of every shown surface vote on the frame too — with no
+    // wells at all they are the frame. Not clustered like wells: a horizon
+    // is one connected thing, there's no "stray pick" to leave out.
+    for (const s of shown) for (const c of seismicPointsFor(seismicHorizons, s.label)) eat(c.x, c.y, -c.z);
     if (!Number.isFinite(minX)) return null;
     if (maxZ - minZ < 1) { minZ -= 1; maxZ += 1; }
     const bounds: Bounds = { minX, maxX, minY, maxY, minZ, maxZ };
     return { bounds, apart: coordWells.length - inMain.length };
-  }, [shown, coordWells, trajs]);
+  }, [shown, coordWells, trajs, seismicHorizons]);
 
   const bounds = framing?.bounds ?? null;
 
@@ -160,11 +174,11 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
       nx: MESH, ny: MESH,
     };
     const out: { id: string; arrays: NonNullable<ReturnType<typeof surfaceMesh>> }[] = [];
-    for (const m of shown) {
-      const built = buildSurface(controlsFor.get(m.id) ?? [], mesh);
+    for (const s of shown) {
+      const built = buildSurface(controlsFor.get(s.id) ?? [], mesh);
       if (!built) continue;
       const arrays = surfaceMesh(built.grid);
-      if (arrays) out.push({ id: m.id, arrays });
+      if (arrays) out.push({ id: s.id, arrays });
     }
     return out;
   }, [shown, controlsFor, bounds]);
@@ -375,7 +389,7 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
 
       {!bounds && (
         <div className="scene3d-empty">
-          Нужны скважины с координатами и хотя бы одна кровля, пропикированная в трёх скважинах.
+          Нужны скважины с координатами и хотя бы одна кровля, пропикированная в трёх скважинах, — или сейсмический горизонт, отправленный в карту.
         </div>
       )}
 
@@ -398,10 +412,10 @@ export function Scene3D({ wells, markers, activeWellId }: Props) {
             </div>
           )}
           <div className="scene3d-surfs">
-            {mappable.map((m) => (
-              <button key={m.id} className={`scene3d-surf ${hidden.includes(m.id) ? '' : 'on'}`}
-                onClick={() => toggle(m.id)} title={m.label}>
-                <span className="map-surf-dot" style={{ background: m.color }} />{m.label}
+            {surfaceDefs.map((s) => (
+              <button key={s.id} className={`scene3d-surf ${hidden.includes(s.id) ? '' : 'on'}`}
+                onClick={() => toggle(s.id)} title={s.marker ? s.label : `${s.label} · сейсмика`}>
+                <span className="map-surf-dot" style={{ background: s.color }} />{s.label}
               </button>
             ))}
           </div>
